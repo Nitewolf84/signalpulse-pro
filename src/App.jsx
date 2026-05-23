@@ -1018,4 +1018,4 @@ export default function SignalPulsePro() {
     </div>
   );
 }
-
+export default SignalPulsePro
