@@ -432,10 +432,18 @@ export default function SignalPulsePro() {
     setTimeout(()=>{ setScreen(S.MAIN); setPivotCoin(null); setPivotRec(null); setTradeMsg(""); },2200);
   };
 
-  const openDeep = async(coin)=>{
+ const openDeep = async(coin)=>{
     setDeepCoin(coin); setScreen(S.DEEP);
     if(deepData[coin.symbol]) return;
     setDeepBusy(p=>({...p,[coin.symbol]:true}));
+    try {
+      const result = await aiDeep(coin, prices[coin.cgId]?.usd, prices[coin.cgId]?.usd_24h_change, histories[coin.cgId]);
+      setDeepData(p=>({...p,[coin.symbol]:result}));
+    } catch(_){
+      setDeepData(p=>({...p,[coin.symbol]:{summary:"Analysis unavailable.",signal:"HODL",confidence:50,riskLevel:"MEDIUM"}}));
+    }
+    setDeepBusy(p=>({...p,[coin.symbol]:false}));
+  };
     try {
   const result = await aiDeep(coin, prices[coin.cgId]?.usd, prices[coin.cgId]?.usd_24h_change);
   setDeepData(p=>({...p,[coin.symbol]:result}));
