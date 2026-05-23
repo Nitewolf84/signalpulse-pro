@@ -30,8 +30,6 @@ const S = {
 };
 
 // ─── FONT STACK ───────────────────────────────────────────────────────────────
-// Clash Display for headlines — modern, geometric, premium
-// Plus Jakarta Sans for body — clean, readable, contemporary
 const FONT_DISPLAY = "'Clash Display', 'Sora', 'Plus Jakarta Sans', sans-serif";
 const FONT_BODY    = "'Plus Jakarta Sans', 'Outfit', 'Inter', sans-serif";
 const FONT_NUM     = "'Sora', 'Plus Jakarta Sans', sans-serif";
@@ -114,16 +112,13 @@ async function aiDeep(coin, price, change, history) {
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════════════════════
 const T = {
-  // Backgrounds — deep navy not black, more premium
   bg0: "#060A14",
   bg1: "#0B1120",
   bg2: "#111827",
   bg3: "rgba(255,255,255,.04)",
-  // Accent — indigo/violet spectrum
   accent:  "#6366F1",
   accent2: "#818CF8",
   accent3: "#C7D2FE",
-  // Semantic
   green:  "#10B981",
   green2: "#34D399",
   red:    "#EF4444",
@@ -131,15 +126,12 @@ const T = {
   gold:   "#F59E0B",
   gold2:  "#FCD34D",
   blue:   "#3B82F6",
-  // Text
   t1: "#F1F5FD",
   t2: "#94A3B8",
   t3: "#475569",
   t4: "#1E293B",
-  // Borders
   b1: "rgba(255,255,255,.08)",
   b2: "rgba(255,255,255,.05)",
-  // Radius
   r1: 16, r2: 12, r3: 8, r4: 6,
 };
 
@@ -432,7 +424,7 @@ export default function SignalPulsePro() {
     setTimeout(()=>{ setScreen(S.MAIN); setPivotCoin(null); setPivotRec(null); setTradeMsg(""); },2200);
   };
 
- const openDeep = async(coin)=>{
+  const openDeep = async(coin)=>{
     setDeepCoin(coin); setScreen(S.DEEP);
     if(deepData[coin.symbol]) return;
     setDeepBusy(p=>({...p,[coin.symbol]:true}));
@@ -442,15 +434,6 @@ export default function SignalPulsePro() {
     } catch(_){
       setDeepData(p=>({...p,[coin.symbol]:{summary:"Analysis unavailable.",signal:"HODL",confidence:50,riskLevel:"MEDIUM"}}));
     }
-    setDeepBusy(p=>({...p,[coin.symbol]:false}));
-  };
-    try {
-  const result = await aiDeep(coin, prices[coin.cgId]?.usd, prices[coin.cgId]?.usd_24h_change);
-  setDeepData(p=>({...p,[coin.symbol]:result}));
-} catch(_){
-  setDeepData(p=>({...p,[coin.symbol]:{summary:"Analysis unavailable.",signal:"HODL",confidence:50,riskLevel:"MEDIUM"}}));
-}
-    catch(_){ setDeepData(p=>({...p,[coin.symbol]:{summary:"Analysis unavailable.",signal:"HODL",confidence:50,riskLevel:"MEDIUM"}})); }
     setDeepBusy(p=>({...p,[coin.symbol]:false}));
   };
   const markRead=()=>{ setNotes(p=>p.map(n=>({...n,read:true}))); setUnread(0); };
@@ -522,7 +505,6 @@ export default function SignalPulsePro() {
         <div style={{height:8}}/>
         <Btn variant="secondary" onClick={()=>{ setAuthErr(""); setScreen(S.LOGIN); }}>Sign In</Btn>
 
-        {/* Owner key */}
         <div style={{marginTop:24,padding:16,background:"rgba(245,158,11,.06)",
           border:`1px solid rgba(245,158,11,.15)`,borderRadius:T.r1}}>
           <p style={{fontSize:12,color:T.gold,fontWeight:600,marginBottom:10}}>👑 Owner Access</p>
@@ -566,7 +548,6 @@ export default function SignalPulsePro() {
             <p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Start trading smarter today</p>
           </div>
         </div>
-
         <SocialBtn icon="G" label="Continue with Google" onClick={doGoogle}/>
         <SocialBtn icon="🍎" label="Continue with Apple" onClick={()=>setAuthErr("Apple Sign In requires deployment.")}/>
         <Divider label="or sign up with email"/>
@@ -602,7 +583,6 @@ export default function SignalPulsePro() {
             <p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Sign in to your account</p>
           </div>
         </div>
-
         <SocialBtn icon="G" label="Continue with Google" onClick={doGoogle}/>
         <SocialBtn icon="🍎" label="Continue with Apple" onClick={()=>setAuthErr("Apple Sign In requires deployment.")}/>
         <Divider label="or sign in with email"/>
@@ -637,8 +617,6 @@ export default function SignalPulsePro() {
           </h2>
           <p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p>
         </div>
-
-        {/* Pricing */}
         <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",
           borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}>
           <p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p>
@@ -653,8 +631,6 @@ export default function SignalPulsePro() {
             </div>
           ))}
         </Card>
-
-        {/* PayPal */}
         <Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}>
           <p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p>
           <p style={{fontSize:13,color:T.t2,marginBottom:14,lineHeight:1.6}}>
@@ -667,7 +643,6 @@ export default function SignalPulsePro() {
             Demo mode — tap to simulate payment
           </p>
         </Card>
-
         <p style={{textAlign:"center",fontSize:12,color:T.t3,lineHeight:1.7}}>
           256-bit SSL encryption · Cancel anytime from PayPal
         </p>
@@ -751,7 +726,6 @@ export default function SignalPulsePro() {
           <Pill label="DEMO"/>
         </div>
         <div style={{padding:16}}>
-          {/* Exit position */}
           <Card style={{marginBottom:14,borderLeft:`3px solid ${exitC?.color}`}} accent={exitC?.color}>
             <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Exiting Position</p>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -779,7 +753,6 @@ export default function SignalPulsePro() {
               <p style={{fontSize:13,color:T.t2,margin:0}}>Claude is finding your best pivot opportunity</p>
             </Card>
           ):pivotRec&&(<>
-            {/* AI Recommendation */}
             <Card style={{marginBottom:14,borderColor:"rgba(99,102,241,.25)",background:"rgba(99,102,241,.06)"}}>
               <p style={{fontSize:11,color:T.accent2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>◈ Claude Recommends</p>
               <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
@@ -808,7 +781,6 @@ export default function SignalPulsePro() {
               </div>
             </Card>
 
-            {/* Allocation Slider */}
             <Card style={{marginBottom:14}}>
               <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:16}}>Allocate Your {pivotCoin}</p>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:12}}>
@@ -823,20 +795,16 @@ export default function SignalPulsePro() {
                   <p style={{fontSize:12,color:T.t2,margin:"4px 0 0"}}>{remainder} · {usd(remUSD)}</p>
                 </div>
               </div>
-
               <input type="range" min={10} max={100} step={5} value={pivotPct}
                 onChange={e=>setPivotPct(Number(e.target.value))}
                 style={{width:"100%",marginBottom:6}}/>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.t3,marginBottom:16}}>
                 <span>10%</span><span>50%</span><span>100%</span>
               </div>
-
-              {/* Split bar */}
               <div style={{height:8,borderRadius:4,overflow:"hidden",background:"rgba(255,255,255,.06)",marginBottom:16,display:"flex"}}>
                 <div style={{width:`${pivotPct}%`,background:"linear-gradient(90deg,#4F46E5,#818CF8)",transition:"width .3s",borderRadius:"4px 0 0 4px"}}/>
                 <div style={{flex:1,background:remainder==="HODL"?"rgba(245,158,11,.35)":"rgba(59,130,246,.35)",transition:"background .3s",borderRadius:"0 4px 4px 0"}}/>
               </div>
-
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Remainder goes to</p>
               <div style={{display:"flex",gap:8}}>
                 {["HODL","USDC","USDT"].map(opt=>(
@@ -1006,7 +974,6 @@ export default function SignalPulsePro() {
       <div style={{background:`radial-gradient(ellipse at 80% 0%,rgba(99,102,241,.08) 0%,transparent 50%)`,position:"fixed",inset:0,pointerEvents:"none"}}/>
       <div style={{position:"relative",zIndex:1}}>
 
-        {/* Header */}
         <div style={{...hdrStyle,padding:"14px 18px 0"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
             <div>
@@ -1036,7 +1003,6 @@ export default function SignalPulsePro() {
             </div>
           </div>
 
-          {/* Tabs */}
           <div style={{display:"flex",borderBottom:`1px solid ${T.b2}`}}>
             {[["signals","Signals"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"]].map(([id,lbl])=>(
               <button key={id} onClick={()=>{ setTab(id); if(id==="alerts")markRead(); }}
@@ -1053,7 +1019,6 @@ export default function SignalPulsePro() {
 
         <div style={{padding:"16px 16px 70px"}}>
 
-          {/* SIGNALS */}
           {tab==="signals"&&COINS.map(coin=>{
             const cg=prices[coin.cgId]||{};
             const sig=signals[coin.symbol];
@@ -1080,15 +1045,12 @@ export default function SignalPulsePro() {
                     </p>
                   </div>
                 </div>
-
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <Spark data={hist} color={coin.color} w={90} h={32}/>
                   {sig&&<Pill label={sig.action}/>}
                 </div>
-
                 {sig&&<ProgressBar val={sig.confidence} color={sigColor}/>}
                 {sig&&<p style={{fontSize:12,color:T.t2,marginTop:8,lineHeight:1.5}}>{sig.reason}</p>}
-
                 {holdBal>0&&(
                   <div style={{marginTop:10,padding:"8px 12px",background:`${coin.color}0e`,
                     borderRadius:T.r3,display:"flex",justifyContent:"space-between",
@@ -1098,7 +1060,6 @@ export default function SignalPulsePro() {
                     {pnlPct!=null&&<span style={{fontSize:12,color:pnlPct>=0?T.green2:T.red,fontWeight:700}}>{pct(pnlPct)}</span>}
                   </div>
                 )}
-
                 <div style={{display:"flex",gap:8,marginTop:12}}>
                   {sig?.action==="EXIT"&&(
                     <button onClick={()=>openPivot(coin.symbol)}
@@ -1125,7 +1086,6 @@ export default function SignalPulsePro() {
             );
           })}
 
-          {/* ALERTS */}
           {tab==="alerts"&&(
             <div>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>
@@ -1139,8 +1099,7 @@ export default function SignalPulsePro() {
                 </Card>
               )}
               {notes.map(n=>(
-                <Card key={n.id} style={{marginBottom:10,borderLeft:`3px solid ${n.coinColor}`,
-                  opacity:n.read?.65:1}}>
+                <Card key={n.id} style={{marginBottom:10,borderLeft:`3px solid ${n.coinColor}`,opacity:n.read?.65:1}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                     <div style={{display:"flex",gap:8,alignItems:"center"}}>
                       <span style={{fontWeight:700,color:n.coinColor,fontSize:14,fontFamily:FONT_DISPLAY}}>{n.coin}</span>
@@ -1166,7 +1125,6 @@ export default function SignalPulsePro() {
             </div>
           )}
 
-          {/* PORTFOLIO */}
           {tab==="portfolio"&&(
             <div>
               <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(99,102,241,.1),rgba(16,185,129,.07))",
@@ -1206,7 +1164,6 @@ export default function SignalPulsePro() {
             </div>
           )}
 
-          {/* TRADE LOG */}
           {tab==="log"&&(
             <div>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>
@@ -1237,5 +1194,3 @@ export default function SignalPulsePro() {
     </div>
   );
 }
-
-export default SignalPulsePro
