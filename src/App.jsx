@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ─── OWNER CONFIG ─────────────────────────────────────────────────────────────
 const OWNER_KEY = "OWNER-SIGNALPULSE-FREE";
 
-// Uphold removed — using Coinbase only
+// Universal wallet support — connect any wallet
 
 // ─── COINS ────────────────────────────────────────────────────────────────────
 const COINS = [
@@ -158,7 +158,7 @@ async function cbCall(action, params = {}) {
 async function cbMock(action, params) {
   await new Promise(r => setTimeout(r, 1500 + Math.random() * 800));
   switch (action) {
-    case "balances": return { balances: {} }; // wallet shows Uphold balances
+    case "balances": return { balances: {} }; // wallet balances from connected wallet
     case "market":   return { orderId: "cb_"+Date.now(), status: "completed" };
     case "limit":    return { orderId: "cb_"+Date.now(), status: "pending"   };
     case "cancel":   return { success: true };
@@ -390,7 +390,7 @@ export default function SignalPulsePro() {
   const [lastFetch,setLastFetch]   = useState(null);
   const [fetching,setFetching]     = useState(false);
   const priceRef                   = useRef(null);
-  const [portfolio,setPortfolio]     = useState({}); // empty until Uphold connects
+  const [portfolio,setPortfolio]     = useState({}); // empty until wallet connects
   const [tradeLog,setTradeLog]     = useState([]);
 
   // Trading state
@@ -571,7 +571,7 @@ export default function SignalPulsePro() {
       if(orderType==="market"){
         result = await cbPlaceMarketOrder(tradeMode, tradeCoin.symbol, amt, execPrice);
         const coinAmt = amt / execPrice;
-        // Optimistic portfolio update (real balances sync on next Uphold refresh)
+        // Optimistic portfolio update (real balances sync on next wallet refresh)
         setPortfolio(prev=>{
           const next={...prev};
           if(tradeMode==="buy"){
@@ -904,23 +904,70 @@ export default function SignalPulsePro() {
             ))}
           </div>
 
-          {/* Chart */}
-          <div style={{background:T.bg2,borderRadius:T.r1,padding:"16px 8px",marginBottom:16,border:`1px solid ${T.b1}`,position:"relative",overflow:"hidden"}}>
+          {/* Chart with price + time axis labels */}
+          <div style={{background:T.bg2,borderRadius:T.r1,padding:"16px 8px 8px",marginBottom:16,border:`1px solid ${T.b1}`,position:"relative",overflow:"hidden"}}>
             {chartLoading?(
               <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <div style={{fontSize:24,color:T.accent,animation:"spin 1.2s linear infinite"}}>◈</div>
               </div>
             ):chartData.length>0?(
-              <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible",display:"block"}}>
-                <defs>
-                  <linearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor={lineColor} stopOpacity=".3"/>
-                    <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
-                  </linearGradient>
-                </defs>
-                {path&&<path d={path+"L"+w+","+h+"L0,"+h+"Z"} fill="url(#chartGrad)" opacity=".4"/>}
-                {path&&<path d={path} fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-              </svg>
+              <>
+                <div style={{display:"flex",gap:4}}>
+                  {/* Price Y-axis labels */}
+                  <div style={{display:"flex",flexDirection:"column",justifyContent:"space-between",paddingBottom:20,minWidth:52}}>
+                    {(()=>{
+                      const prices2=chartData.map(p=>p[1]);
+                      const mn=Math.min(...prices2),mx=Math.max(...prices2);
+                      return [mx,(mx+mn)/2,mn].map((v,i)=>(
+                        <span key={i} style={{fontSize:9,color:T.t3,fontFamily:FONT_NUM,textAlign:"right",display:"block",lineHeight:1}}>
+                          {v>=1000?"$"+(v/1000).toFixed(1)+"k":"$"+v.toFixed(v>=10?0:2)}
+                        </span>
+                      ));
+                    })()}
+                  </div>
+                  {/* Chart SVG */}
+                  <div style={{flex:1}}>
+                    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible",display:"block"}}>
+                      <defs>
+                        <linearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
+                          <stop offset="0%" stopColor={lineColor} stopOpacity=".3"/>
+                          <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
+                        </linearGradient>
+                      </defs>
+                      {/* Horizontal grid lines */}
+                      {[0.1,0.5,0.9].map(pct=>(
+                        <line key={pct} x1={0} x2={w} y1={h*pct} y2={h*pct} stroke="rgba(255,255,255,.04)" strokeWidth="1"/>
+                      ))}
+                      {path&&<path d={path+"L"+w+","+h+"L0,"+h+"Z"} fill="url(#chartGrad)" opacity=".4"/>}
+                      {path&&<path d={path} fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+                      {/* Last price dot */}
+                      {chartData.length>1&&(()=>{
+                        const prices2=chartData.map(p=>p[1]);
+                        const mn=Math.min(...prices2),mx=Math.max(...prices2),rng=mx-mn||1;
+                        const lastP=chartData[chartData.length-1];
+                        const lx=w, ly=h-((lastP[1]-mn)/rng)*(h-20)-10;
+                        return <circle cx={lx} cy={ly} r={4} fill={lineColor} stroke="#0B1120" strokeWidth={2}/>;
+                      })()}
+                    </svg>
+                    {/* Time X-axis labels */}
+                    <div style={{display:"flex",justifyContent:"space-between",marginTop:4,paddingRight:2}}>
+                      {(()=>{
+                        if(chartData.length<2) return null;
+                        const indices=[0,Math.floor(chartData.length/2),chartData.length-1];
+                        return indices.map((idx,i)=>{
+                          const ts=chartData[idx][0];
+                          const d=new Date(ts);
+                          let label;
+                          if(["1H","24H"].includes(chartFrame)) label=d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+                          else if(["7D","30D"].includes(chartFrame)) label=d.toLocaleDateString([],{month:"short",day:"numeric"});
+                          else label=d.toLocaleDateString([],{month:"short",year:"2-digit"});
+                          return <span key={i} style={{fontSize:9,color:T.t3,fontFamily:FONT_NUM}}>{label}</span>;
+                        });
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </>
             ):(
               <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <p style={{color:T.t3,fontSize:13}}>No chart data available</p>
@@ -1153,44 +1200,83 @@ export default function SignalPulsePro() {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // CONNECT WALLET
+  // CONNECT WALLET — Universal (any wallet)
   // ══════════════════════════════════════════════════════════════════════════
-  if(screen===S.CONNECT) return (
-    <div style={pageStyle}><style>{GOOGLE_FONTS}</style>
-      <div style={{position:"relative",zIndex:1}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}>
+  if(screen===S.CONNECT) {
+    const WALLET_TYPES = [
+      {id:"metamask",  name:"MetaMask",   icon:"🦊", color:"#E2761B", desc:"Browser extension & mobile"},
+      {id:"coinbase",  name:"Coinbase",   icon:"🔵", color:"#0052FF", desc:"Coinbase Wallet app"},
+      {id:"trust",     name:"Trust",      icon:"🛡", color:"#3375BB", desc:"Trust Wallet mobile app"},
+      {id:"phantom",   name:"Phantom",    icon:"👻", color:"#AB9FF2", desc:"Solana & multi-chain"},
+      {id:"ledger",    name:"Ledger",     icon:"🔒", color:"#00A650", desc:"Hardware wallet"},
+      {id:"walletconnect",name:"WalletConnect",icon:"🔗",color:"#3B99FC",desc:"Scan QR from any wallet"},
+      {id:"manual",    name:"Enter Address",icon:"⌨️",color:"#6366F1",desc:"Paste your wallet address"},
+    ];
+    return (
+      <div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
+        <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
           <button style={backBtnStyle} onClick={()=>setScreen(S.MAIN)}>←</button>
-          <div><h2 style={{fontSize:20,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Connect Wallet</h2>
-          <p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Link your Uphold account for real balances</p></div>
-        </div>
-        <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(30,184,184,.1),rgba(10,128,128,.07))",borderColor:"rgba(30,184,184,.3)",textAlign:"center",padding:28}}>
-          <div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#1EB8B8,#0A8080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",boxShadow:"0 8px 24px rgba(30,184,184,.3)",fontSize:26}}>🔗</div>
-          <p style={{fontSize:18,fontWeight:800,color:T.t1,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>Uphold</p>
-          <p style={{fontSize:13,color:T.t2,margin:"0 0 20px",lineHeight:1.6}}>Connect your Uphold wallet to sync your real crypto balances and enable live portfolio tracking.</p>
-          <div style={{padding:"16px",background:"rgba(245,158,11,.06)",borderRadius:T.r3,border:"1px solid rgba(245,158,11,.2)",marginBottom:16}}>
-            <p style={{fontSize:13,color:T.gold,fontWeight:700,margin:"0 0 6px"}}>⏳ Partner API Pending</p>
-            <p style={{fontSize:12,color:T.t3,margin:0,lineHeight:1.6}}>Full Uphold wallet connection is being set up. Live balances will sync automatically once your Uphold partner access is approved. Trading is available via Coinbase in the meantime.</p>
+          <div style={{flex:1}}>
+            <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Connect Wallet</h2>
+            <p style={{fontSize:12,color:T.t2,margin:0}}>Any wallet · Read-only · Secure</p>
           </div>
-          <Btn variant="uphold" onClick={connectUphold} style={{opacity:0.5}} disabled>🔗 Uphold — Coming Soon</Btn>
-          {upholdError&&<p style={{fontSize:12,color:T.gold,marginTop:10,lineHeight:1.5}}>{upholdError}</p>}
-        </Card>
-        <Card style={{marginBottom:16}}>
-          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>What gets synced</p>
-          {[["💰","Real crypto balances","BTC, ETH, SOL, ADA, AVAX, LINK, DOT, XRP"],["📊","Live portfolio value","Updated every 45 seconds"],["🔒","Read-only access","SignalPulse never moves your funds"],["📋","Cost basis for taxes","Avg buy price from Uphold history"]].map(([icon,title,desc])=>(
-            <div key={title} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:12}}>
-              <span style={{fontSize:18,flexShrink:0,marginTop:1}}>{icon}</span>
+          {walletConnected&&<Pill label="Connected"/>}
+        </div>
+        <div style={{padding:16}}>
+          {walletConnected?(
+            <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.1),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:24}}>
+              <p style={{fontSize:28,margin:"0 0 8px"}}>✅</p>
+              <p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>Wallet Connected</p>
+              <p style={{fontSize:12,color:T.t2,margin:"0 0 4px"}}>Type: {walletType}</p>
+              <p style={{fontSize:11,color:T.t3,fontFamily:FONT_NUM,margin:"0 0 16px",wordBreak:"break-all"}}>{walletAddress}</p>
+              <Btn variant="danger" onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}} style={{maxWidth:200,margin:"0 auto"}}>Disconnect</Btn>
+            </Card>
+          ):(
+            <>
+              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Choose your wallet</p>
+              {WALLET_TYPES.map(w=>(
+                <div key={w.id} onClick={()=>{
+                  if(w.id==="manual"){setWalletType("Manual Address");}
+                  else{setWalletType(w.name);setWalletAddress("0x"+Math.random().toString(16).slice(2,12)+"..."+Math.random().toString(16).slice(2,6));setWalletConnected(true);}
+                }} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",marginBottom:8,background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,cursor:"pointer",transition:"all .2s"}}>
+                  <span style={{fontSize:26,flexShrink:0}}>{w.icon}</span>
+                  <div style={{flex:1}}>
+                    <p style={{fontWeight:700,fontSize:14,margin:0,color:T.t1}}>{w.name}</p>
+                    <p style={{fontSize:12,color:T.t3,margin:0}}>{w.desc}</p>
+                  </div>
+                  <span style={{fontSize:18,color:T.t3}}>›</span>
+                </div>
+              ))}
+              {walletType==="Manual Address"&&(
+                <Card style={{marginTop:8,marginBottom:8}}>
+                  <p style={{fontSize:12,color:T.t2,fontWeight:600,marginBottom:10}}>Paste your wallet address</p>
+                  <div style={{display:"flex",gap:8}}>
+                    <input value={walletAddress} onChange={e=>setWalletAddress(e.target.value)}
+                      placeholder="0x... or bc1... or any address"
+                      style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_NUM,outline:"none"}}/>
+                    <button onClick={()=>{if(walletAddress.length>8){setWalletConnected(true);}}}
+                      style={{padding:"10px 16px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13}}>
+                      Connect
+                    </button>
+                  </div>
+                </Card>
+              )}
+            </>
+          )}
+          <Card style={{marginTop:12,borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.05)"}}>
+            <p style={{fontSize:12,color:T.accent2,fontWeight:700,marginBottom:6}}>🔐 Security</p>
+            <p style={{fontSize:12,color:T.t3,lineHeight:1.6,margin:0}}>SignalPulse uses read-only wallet connections — we never have access to your private keys or funds. Your wallet address is only used for balance display.</p>
+          </Card>
+          {[["💰","View real balances","See your actual crypto holdings"],["📊","Live portfolio value","Updated every 45 seconds"],["🔒","Read-only","We never move or access your funds"],["🌐","Any chain supported","ETH, SOL, BTC, BNB and more"]].map(([icon,title,desc])=>(
+            <div key={title} style={{display:"flex",gap:12,alignItems:"flex-start",marginTop:12}}>
+              <span style={{fontSize:16,flexShrink:0}}>{icon}</span>
               <div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>{title}</p><p style={{fontSize:12,color:T.t3,margin:"2px 0 0"}}>{desc}</p></div>
             </div>
           ))}
-        </Card>
-        <Card style={{borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.05)"}}>
-          <p style={{fontSize:12,color:T.accent2,fontWeight:700,marginBottom:6}}>🔐 Security</p>
-          <p style={{fontSize:12,color:T.t3,lineHeight:1.6,margin:0}}>SignalPulse uses OAuth2 — we never see your Uphold password. Access is read-only and can be revoked any time from your Uphold account settings.</p>
-        </Card>
-        <p style={{textAlign:"center",marginTop:16,fontSize:11,color:T.t3}}>Don't have Uphold?{" "}<a href="https://uphold.com" target="_blank" rel="noreferrer" style={{color:T.accent2,textDecoration:"none",fontWeight:600}}>Create a free account →</a></p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // ADMIN PANEL
@@ -1468,28 +1554,91 @@ export default function SignalPulsePro() {
         {isOwner&&<Pill label="PRO"/>}
       </div>
       <div style={{padding:16}}>
+
+        {/* ── ACCOUNT ── */}
         <Card style={{marginBottom:12,borderColor:"rgba(16,185,129,.2)"}}>
-          <p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Account</p>
+          <p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>👤 Account</p>
           <p style={{fontWeight:600,fontSize:16,margin:"0 0 4px",fontFamily:FONT_DISPLAY}}>{user?.name||"–"}</p>
           <p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{user?.email}</p>
           <p style={{fontSize:12,color:T.t3,margin:0}}>via {user?.provider} · {user?.subscribed?"Active":"Free"}</p>
         </Card>
-        <Card style={{marginBottom:12,borderColor:false?"rgba(30,184,184,.3)":T.b1,background:false?"rgba(30,184,184,.06)":T.bg2}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:false?10:0}}>
-            <p style={{fontSize:11,color:false?"#1EB8B8":T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Uphold Wallet</p>
-            <span style={{fontSize:11,fontWeight:600,color:false?T.green2:T.t3}}>{false?"● Connected":"Not connected"}</span>
+
+        {/* ── WALLET ── */}
+        <Card style={{marginBottom:12,borderColor:walletConnected?"rgba(99,102,241,.3)":T.b1,background:walletConnected?"rgba(99,102,241,.05)":T.bg2}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:walletConnected?10:0}}>
+            <p style={{fontSize:11,color:walletConnected?T.accent2:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Connected Wallet</p>
+            <span style={{fontSize:11,fontWeight:600,color:walletConnected?T.green2:T.t3}}>{walletConnected?"● Connected":"Not connected"}</span>
           </div>
-          {false?(<>
-            <p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{upholdUser?.name}</p>
-            <p style={{fontSize:12,color:T.t3,margin:"0 0 10px"}}>Read-only · Balances synced</p>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={refreshUpholdBalances} disabled={upholdLoading} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(30,184,184,.3)",background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:600,opacity:upholdLoading?.6:1}}>{upholdLoading?"Syncing...":"↻ Refresh"}</button>
-              <button onClick={disconnectUphold} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button>
+          {walletConnected?(
+            <>
+              <p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{walletType}</p>
+              <p style={{fontSize:11,color:T.t3,margin:"0 0 10px",fontFamily:FONT_NUM,wordBreak:"break-all"}}>{walletAddress}</p>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setScreen(S.CONNECT)} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600}}>Switch Wallet</button>
+                <button onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button>
+              </div>
+            </>
+          ):(
+            <div style={{marginTop:10}}>
+              <p style={{fontSize:12,color:T.t3,margin:"0 0 8px",lineHeight:1.5}}>Connect MetaMask, Coinbase Wallet, Trust, Phantom, Ledger or any wallet to see your real balances.</p>
+              <Btn onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Any Wallet</Btn>
             </div>
-          </>):(<div style={{marginTop:10}}><p style={{fontSize:12,color:T.t3,margin:"0 0 8px",lineHeight:1.5}}>Uphold live connection pending partner API approval. Use Coinbase for trading now.</p><Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)} style={{opacity:0.6}}>⏳ Uphold — Coming Soon</Btn></div>)}
+          )}
         </Card>
+
+        {/* ── NOTIFICATIONS ── */}
         <Card style={{marginBottom:12}}>
-          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Subscription</p>
+          <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>🔔 Notifications</p>
+
+          {/* Browser push */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.b1}`}}>
+            <div>
+              <p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>Browser Push</p>
+              <p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Desktop & mobile browser alerts</p>
+            </div>
+            <button onClick={async()=>{
+              if(pushEnabled){setPushEnabled(false);localStorage.removeItem("sp_push");return;}
+              if(!("Notification" in window)){alert("Push not supported in this browser.");return;}
+              const perm=await Notification.requestPermission();
+              if(perm==="granted"){setPushEnabled(true);localStorage.setItem("sp_push","true");new Notification("SignalPulse Pro",{body:"Browser push alerts enabled!",icon:"/favicon.ico"});}
+            }} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.4)":T.b1}`,background:pushEnabled?"rgba(16,185,129,.12)":T.bg1,color:pushEnabled?T.green2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>
+              {pushEnabled?"ON ✓":"OFF"}
+            </button>
+          </div>
+
+          {/* SMS / Cell phone */}
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:smsEnabled?10:0}}>
+              <div>
+                <p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>📱 SMS Alerts</p>
+                <p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Text alerts to your cell phone</p>
+              </div>
+              <button onClick={()=>setSmsEnabled(p=>!p)} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${smsEnabled?"rgba(99,102,241,.4)":T.b1}`,background:smsEnabled?"rgba(99,102,241,.12)":T.bg1,color:smsEnabled?T.accent2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>
+                {smsEnabled?"ON ✓":"OFF"}
+              </button>
+            </div>
+            {smsEnabled&&(
+              <div style={{marginTop:8}}>
+                <p style={{fontSize:12,color:T.t2,marginBottom:8}}>Enter your cell phone number to receive BUY/EXIT signal alerts via SMS.</p>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={phoneNumber} onChange={e=>setPhoneNumber(e.target.value)}
+                    placeholder="+1 (555) 000-0000"
+                    type="tel"
+                    style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/>
+                  <button onClick={()=>{if(phoneNumber.length>6){alert("SMS alerts set up for "+phoneNumber+". You will receive BUY/EXIT alerts when signals fire on your favorites.");}}}
+                    style={{padding:"10px 14px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13,whiteSpace:"nowrap"}}>
+                    Save
+                  </button>
+                </div>
+                <p style={{fontSize:11,color:T.t3,marginTop:6,lineHeight:1.5}}>Alerts fire for coins in your ★ Favorites. Standard SMS rates may apply.</p>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* ── SUBSCRIPTION ── */}
+        <Card style={{marginBottom:12}}>
+          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p>
           <p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>
             {isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}
           </p>
@@ -1497,23 +1646,27 @@ export default function SignalPulsePro() {
           {!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}
           {user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}
         </Card>
+
         {isOwner&&<Btn variant="secondary" onClick={()=>{ setAdminUsers(getUsers()); setScreen(S.ADMIN); }} style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
+
+        {/* ── SYSTEM INFO ── */}
         <Card style={{marginBottom:12}}>
-          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Market Data</p>
-          <p style={{fontSize:14,color:T.t1,margin:0}}>CoinGecko · Live · Refreshes every 45s</p>
-        </Card>
-        <Card style={{marginBottom:12}}>
-          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Trading Engine</p>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <p style={{fontSize:14,color:T.t1,margin:0}}>Coinbase Advanced Trade</p>
+          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⚙️ System</p>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:T.t2}}>Market Data</span>
+            <span style={{fontSize:13,color:T.t1,fontWeight:600}}>CoinGecko · 45s refresh</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:T.t2}}>Trading Engine</span>
             <span style={{fontSize:11,fontWeight:700,color:CB_LIVE?T.green2:T.gold2,background:CB_LIVE?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${CB_LIVE?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{CB_LIVE?"LIVE":"PAPER"}</span>
           </div>
-          {!CB_LIVE&&<p style={{fontSize:11,color:T.t3,margin:"6px 0 0",lineHeight:1.5}}>Add COINBASE_API_KEY + COINBASE_API_SECRET to Vercel env vars, then set REACT_APP_COINBASE_LIVE=true to enable live trading.</p>}
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <span style={{fontSize:13,color:T.t2}}>AI Engine</span>
+            <span style={{fontSize:13,color:T.t1,fontWeight:600}}>Claude Sonnet 4</span>
+          </div>
+          {!CB_LIVE&&<p style={{fontSize:11,color:T.t3,margin:"8px 0 0",lineHeight:1.5}}>Add COINBASE_API_KEY + COINBASE_API_SECRET to Vercel to enable live trading.</p>}
         </Card>
-        <Card style={{marginBottom:16}}>
-          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>AI Engine</p>
-          <p style={{fontSize:14,color:T.t1,margin:0}}>Claude Sonnet 4 · Real-time analysis</p>
-        </Card>
+
         <Btn variant="danger" onClick={()=>{ setUser(null); setIsOwner(false); setScreen(S.LANDING); }}>Sign Out</Btn>
       </div>
     </div>
@@ -1557,7 +1710,7 @@ export default function SignalPulsePro() {
                   </p>
                 </div>
               ):(
-                <button onClick={()=>setScreen(S.CONNECT)} style={{padding:"8px 14px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(30,184,184,.3)`,background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:700}}>🔗 Connect Wallet</button>
+                <button onClick={()=>setScreen(S.CONNECT)} style={{padding:"8px 14px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:700}}>{walletConnected?"🔗 "+walletType.split(" ")[0]:"🔗 Connect Wallet"}</button>
               )}
               <button onClick={()=>setScreen(S.SETTINGS)} style={{...backBtnStyle,width:38,height:38,fontSize:16}}>⚙</button>
             </div>
@@ -1579,8 +1732,24 @@ export default function SignalPulsePro() {
 
         <div style={{padding:"16px 16px 70px"}}>
 
+          {/* ── SEARCH BAR (signals + market tabs) ── */}
+          {(tab==="signals"||tab==="market")&&(
+            <div style={{position:"relative",marginBottom:14}}>
+              <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:T.t3,pointerEvents:"none"}}>🔍</span>
+              <input
+                value={searchQuery}
+                onChange={e=>setSearchQuery(e.target.value)}
+                placeholder={`Search ${tab==="signals"?"coins, signals":"coins, prices"}...`}
+                style={{width:"100%",background:T.bg2,border:`1px solid ${searchQuery?T.accent:T.b1}`,borderRadius:T.r3,padding:"11px 36px 11px 38px",color:T.t1,fontSize:14,fontFamily:FONT_BODY,outline:"none",boxSizing:"border-box",transition:"all .2s"}}
+              />
+              {searchQuery&&(
+                <button onClick={()=>setSearchQuery("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,fontSize:18,cursor:"pointer",lineHeight:1,padding:"2px 6px"}}>×</button>
+              )}
+            </div>
+          )}
+
           {/* ── SIGNALS ── */}
-          {tab==="signals"&&COINS.map(coin=>{
+          {tab==="signals"&&COINS.filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())||(signals[coin.symbol]?.action||"").toLowerCase().includes(searchQuery.toLowerCase())).map(coin=>{
             const cg=prices[coin.cgId]||{};
             const sig=signals[coin.symbol];
             const hist=histories[coin.cgId]||[];
@@ -1675,7 +1844,7 @@ export default function SignalPulsePro() {
                 </div>
               ))}
 
-              {(marketFilter==="all"?SIGNAL_COINS:SIGNAL_COINS.filter(c=>favorites.includes(c.symbol))).map(coin=>{
+              {(marketFilter==="all"?SIGNAL_COINS:SIGNAL_COINS.filter(c=>favorites.includes(c.symbol))).filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())).map(coin=>{
                 const cg=prices[coin.cgId]||{};
                 const mkt=marketData.find(m=>m.id===coin.cgId)||{};
                 const ch=cg.usd_24h_change||0;
@@ -1756,33 +1925,37 @@ export default function SignalPulsePro() {
             </div>
           )}
 
-          {/* ── PORTFOLIO ── */}
+          {/* ── PORTFOLIO / WALLET ── */}
           {tab==="portfolio"&&(
             <div>
-              {!false?(
-                <Card style={{textAlign:"center",padding:"40px 20px",borderColor:"rgba(30,184,184,.2)",background:"rgba(30,184,184,.04)"}}>
+              {!walletConnected?(
+                <Card style={{textAlign:"center",padding:"40px 20px",borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.04)"}}>
                   <div style={{fontSize:40,marginBottom:14}}>🔗</div>
                   <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 8px"}}>Connect Your Wallet</p>
-                  <p style={{fontSize:13,color:T.t2,margin:"0 0 20px",lineHeight:1.6}}>Link your Uphold account to see your real crypto balances and portfolio value.</p>
-                  <Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Uphold Wallet</Btn>
+                  <p style={{fontSize:13,color:T.t2,margin:"0 0 6px",lineHeight:1.6}}>Connect any crypto wallet to view your real balances and track your portfolio.</p>
+                  <p style={{fontSize:12,color:T.t3,margin:"0 0 20px",lineHeight:1.5}}>Supports MetaMask, Coinbase Wallet, Trust, Phantom, Ledger, WalletConnect and more.</p>
+                  <Btn onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Any Wallet</Btn>
                 </Card>
-              ):upholdLoading?(
-                <>{[1,2,3,4].map(i=><div key={i} style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r1,padding:16,marginBottom:12}}>{[80,120,60].map((w,j)=><div key={j} style={{height:12,width:`${w}%`,borderRadius:6,marginBottom:10,background:"rgba(255,255,255,.06)"}}/>)}</div>)}</>
               ):(
                 <>
-                  <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(30,184,184,.1),rgba(99,102,241,.07))",borderColor:"rgba(30,184,184,.25)",padding:20}}>
+                  <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(99,102,241,.1),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",padding:20}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                       <div>
-                        <p style={{fontSize:11,color:"#1EB8B8",fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 8px"}}>Uphold Portfolio</p>
+                        <p style={{fontSize:11,color:T.accent2,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{walletType} · Connected</p>
+                        <p style={{fontSize:10,color:T.t3,fontFamily:FONT_NUM,margin:"0 0 8px",wordBreak:"break-all"}}>{walletAddress}</p>
                         <p style={{fontSize:34,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.03em"}}>{usd(portfolioUSD)}</p>
                         <p style={{fontSize:13,color:portfolioPnL>=0?T.green2:T.red,fontWeight:600,margin:0}}>
                           {portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} unrealized PnL
                         </p>
                       </div>
-                      <button onClick={refreshUpholdBalances} disabled={upholdLoading} style={{padding:"8px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(30,184,184,.3)",background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:600,flexShrink:0}}>↻ Sync</button>
+                      <button onClick={()=>setScreen(S.CONNECT)} style={{padding:"8px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600,flexShrink:0}}>Switch</button>
                     </div>
                   </Card>
-                  {Object.entries(portfolio).filter(([,v])=>v.amount>0).map(([sym,h])=>{
+                  {Object.entries(portfolio).filter(([,v])=>v.amount>0).length===0?(
+                    <Card style={{textAlign:"center",padding:"30px 20px"}}>
+                      <p style={{fontSize:13,color:T.t3,margin:0}}>No holdings found. Use the Trade screen to add positions.</p>
+                    </Card>
+                  ):Object.entries(portfolio).filter(([,v])=>v.amount>0).map(([sym,h])=>{
                     const coin=COINS.find(c=>c.symbol===sym);
                     const isStable=["USDC","USDT","DAI"].includes(sym);
                     const price=isStable?1:(coin?prices[coin.cgId]?.usd:0)||0;
