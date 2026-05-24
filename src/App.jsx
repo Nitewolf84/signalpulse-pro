@@ -426,6 +426,12 @@ export default function SignalPulsePro() {
   const [marketFilter,setMarketFilter] = useState("all");
   const [pushEnabled,setPushEnabled] = useState(false);
   const [trialDaysLeft,setTrialDaysLeft] = useState(30);
+  const [searchQuery,setSearchQuery]     = useState("");
+  const [walletAddress,setWalletAddress] = useState("");
+  const [walletType,setWalletType]       = useState("");
+  const [walletConnected,setWalletConnected] = useState(false);
+  const [phoneNumber,setPhoneNumber]     = useState("");
+  const [smsEnabled,setSmsEnabled]       = useState(false);
 
   useEffect(()=>{ const t=setTimeout(()=>setScreen(S.LANDING),2000); return()=>clearTimeout(t); },[]);
 
