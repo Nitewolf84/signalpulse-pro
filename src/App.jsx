@@ -968,14 +968,14 @@ export default function SignalPulsePro() {
             <Btn
               variant={tradeMode==="buy"?"success":"danger"}
               onClick={executeTradeOrder}
-              disabled={tradeBusy||!tradeAmount||!upholdConnected}>
+              disabled={tradeBusy||!tradeAmount}>
               {tradeBusy?<span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>◈</span>:null}
               {tradeBusy?"Processing...":`${orderType==="limit"?"Place Limit Order":tradeMode==="buy"?"Buy":"Sell"} ${tradeCoin.symbol}`}
             </Btn>
           )}
           {tradeResult&&<Btn variant="secondary" onClick={()=>{setTradeResult(null);setTradeAmount("");setTradeError("");}}>Place Another Order</Btn>}
 
-          {!upholdConnected&&<p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:10,lineHeight:1.6}}>Connect your Uphold wallet above to enable real trading.</p>}
+          {!CB_LIVE&&<p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:10,lineHeight:1.6}}>Add Coinbase API keys to Vercel env vars and redeploy to enable live trading.</p>}
           {<p style={{fontSize:11,color:CB_LIVE?T.green2:T.gold2,textAlign:"center",marginTop:10,lineHeight:1.6}}>{CB_LIVE?"🟢 Live trading via Coinbase Advanced Trade":"🟡 Paper mode — set REACT_APP_COINBASE_LIVE=true in Vercel to go live"}</p>}
 
           {/* Open limit orders */}
