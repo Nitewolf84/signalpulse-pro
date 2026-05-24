@@ -1603,7 +1603,6 @@ export default function SignalPulsePro() {
                     <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{cg.usd?usd(cg.usd):"–"}</p>
                     <p style={{fontSize:12,color:(cg.usd_24h_change||0)>=0?T.green2:T.red,margin:0,fontWeight:600}}>{pct(cg.usd_24h_change||0)}</p>
                   </div>
-                  </div>
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <Spark data={hist} color={coin.color} w={90} h={32}/>
