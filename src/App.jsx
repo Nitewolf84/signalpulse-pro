@@ -3,23 +3,32 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ─── OWNER CONFIG ─────────────────────────────────────────────────────────────
 const OWNER_KEY = "OWNER-SIGNALPULSE-FREE";
 
-// ─── UPHOLD CONFIG ────────────────────────────────────────────────────────────
-// Add real values to your Vercel environment variables when ready
-const UPHOLD_CLIENT_ID = process.env.REACT_APP_UPHOLD_CLIENT_ID || "YOUR_UPHOLD_CLIENT_ID";
-const UPHOLD_REDIRECT_URI = process.env.REACT_APP_UPHOLD_REDIRECT_URI || "https://your-app.vercel.app/api/uphold-callback";
-const UPHOLD_SCOPES = "accounts:read transactions:read";
+// Uphold removed — using Coinbase only
 
 // ─── COINS ────────────────────────────────────────────────────────────────────
 const COINS = [
-  { symbol:"BTC",  name:"Bitcoin",   color:"#F7931A", cgId:"bitcoin"     },
-  { symbol:"ETH",  name:"Ethereum",  color:"#627EEA", cgId:"ethereum"    },
-  { symbol:"SOL",  name:"Solana",    color:"#9945FF", cgId:"solana"      },
-  { symbol:"ADA",  name:"Cardano",   color:"#0055FF", cgId:"cardano"     },
-  { symbol:"AVAX", name:"Avalanche", color:"#E84142", cgId:"avalanche-2" },
-  { symbol:"LINK", name:"Chainlink", color:"#2A5ADA", cgId:"chainlink"   },
-  { symbol:"DOT",  name:"Polkadot",  color:"#E6007A", cgId:"polkadot"    },
-  { symbol:"XRP",  name:"XRP",       color:"#00AAE4", cgId:"ripple"      },
+  { symbol:"BTC",   name:"Bitcoin",       color:"#F7931A", cgId:"bitcoin"          },
+  { symbol:"ETH",   name:"Ethereum",      color:"#627EEA", cgId:"ethereum"         },
+  { symbol:"SOL",   name:"Solana",        color:"#9945FF", cgId:"solana"           },
+  { symbol:"XRP",   name:"XRP",           color:"#00AAE4", cgId:"ripple"           },
+  { symbol:"BNB",   name:"BNB",           color:"#F3BA2F", cgId:"binancecoin"      },
+  { symbol:"ADA",   name:"Cardano",       color:"#0055FF", cgId:"cardano"          },
+  { symbol:"DOGE",  name:"Dogecoin",      color:"#C2A633", cgId:"dogecoin"         },
+  { symbol:"AVAX",  name:"Avalanche",     color:"#E84142", cgId:"avalanche-2"      },
+  { symbol:"LINK",  name:"Chainlink",     color:"#2A5ADA", cgId:"chainlink"        },
+  { symbol:"DOT",   name:"Polkadot",      color:"#E6007A", cgId:"polkadot"         },
+  { symbol:"MATIC", name:"Polygon",       color:"#8247E5", cgId:"matic-network"    },
+  { symbol:"UNI",   name:"Uniswap",       color:"#FF007A", cgId:"uniswap"          },
+  { symbol:"ATOM",  name:"Cosmos",        color:"#6F7390", cgId:"cosmos"           },
+  { symbol:"LTC",   name:"Litecoin",      color:"#BFBBBB", cgId:"litecoin"         },
+  { symbol:"BCH",   name:"Bitcoin Cash",  color:"#8DC351", cgId:"bitcoin-cash"     },
+  { symbol:"NEAR",  name:"NEAR Protocol", color:"#00C08B", cgId:"near"             },
+  { symbol:"APT",   name:"Aptos",         color:"#29A8FF", cgId:"aptos"            },
+  { symbol:"ARB",   name:"Arbitrum",      color:"#28A0F0", cgId:"arbitrum"         },
+  { symbol:"USDC",  name:"USD Coin",      color:"#2775CA", cgId:"usd-coin"         },
+  { symbol:"USDT",  name:"Tether",        color:"#26A17B", cgId:"tether"           },
 ];
+const SIGNAL_COINS = COINS.filter(c=>!["USDC","USDT"].includes(c.symbol));
 
 const S = {
   SPLASH:"splash", LANDING:"landing", LOGIN:"login", SIGNUP:"signup",
@@ -38,6 +47,7 @@ const GOOGLE_FONTS = `
   @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.4} }
   @keyframes rpl    { 0%{box-shadow:0 0 0 0 rgba(99,102,241,.5)} 70%{box-shadow:0 0 0 10px rgba(99,102,241,0)} 100%{box-shadow:0 0 0 0 rgba(99,102,241,0)} }
   @keyframes spin   { to{transform:rotate(360deg)} }
+  @keyframes shimmer { 0%{opacity:.4} 50%{opacity:.8} 100%{opacity:.4} }
   * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   input::placeholder { color: rgba(255,255,255,.25); }
   input:focus { border-color: rgba(99,102,241,.5) !important; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
@@ -55,6 +65,29 @@ const clamp= (v,a,b) => Math.max(a,Math.min(b,v));
 
 // ─── MOCK AUTH ────────────────────────────────────────────────────────────────
 const MOCK_KEY = "sp_users_v2";
+const SESSION_KEY = "sp_session_v1"; // persists subscription status across logins
+
+function saveSession(user) {
+  // Save subscription/trial status so it survives page refresh
+  localStorage.setItem(SESSION_KEY, JSON.stringify({
+    subscribed: user.subscribed,
+    trial: user.trial || false,
+    trialStart: user.trialStart || null,
+  }));
+}
+function loadSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)||"null"); } catch(_){ return null; }
+}
+function clearSession() { localStorage.removeItem(SESSION_KEY); }
+
+function getTrialDaysLeft(trialStart) {
+  if(!trialStart) return 0;
+  const elapsed = (Date.now() - trialStart) / (1000*60*60*24);
+  return Math.max(0, Math.ceil(30 - elapsed));
+}
+function isTrialExpired(trialStart) {
+  return trialStart && (Date.now() - trialStart) > 30*24*60*60*1000;
+}
 const getUsers = () => { try { return JSON.parse(localStorage.getItem(MOCK_KEY)||"[]"); } catch(_){ return []; } };
 const saveUsers = u => localStorage.setItem(MOCK_KEY, JSON.stringify(u));
 
@@ -63,7 +96,7 @@ async function signUpUser(email, password, name) {
   if(users.find(u=>u.email===email)) throw new Error("Email already registered.");
   const user = { id:Date.now().toString(), email, password, name,
     createdAt:new Date().toISOString(), subscribed:false, provider:"email" };
-  users.push(user); saveUsers(users); return user;
+  users.push(user); saveUsers(users); return user; // session saved by caller
 }
 async function signInUser(email, password) {
   const user = getUsers().find(u=>u.email===email&&u.password===password);
@@ -82,39 +115,31 @@ function updateUserSub(userId, val) {
 // ─── COINGECKO ────────────────────────────────────────────────────────────────
 async function fetchCGPrices() {
   const ids=COINS.map(c=>c.cgId).join(",");
-  const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`);
+  const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`);
   if(!r.ok) throw new Error("CG");
   return r.json();
 }
 
-// ─── UPHOLD API LAYER ────────────────────────────────────────────────────────
-// All real Uphold calls go through your Vercel serverless functions in /api/
-// Swap the mock lines for the REAL lines once your partner credentials are approved.
-
-async function upholdFetchBalances(accessToken) {
-  // REAL (when Uphold partner API approved):
-  // const r = await fetch('/api/uphold-balances', { headers:{ Authorization:`Bearer ${accessToken}` }});
-  // const d = await r.json(); return d;
-
-  // Returns empty until real Uphold partner API is connected.
-  // No fake balances — users see only their real holdings.
-  await new Promise(r=>setTimeout(r,1000));
-  return {};
+async function fetchCGMarketData(cgIds) {
+  // Market data including ATH, ATL, market cap, volume, rank
+  const ids = cgIds.join(",");
+  const r = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=50&page=1&sparkline=false&price_change_percentage=1h,24h,7d,30d`);
+  if(!r.ok) throw new Error("CG markets");
+  return r.json();
 }
 
-function upholdGetAuthURL() {
-  // REAL: return `https://uphold.com/authorize/${UPHOLD_CLIENT_ID}?scope=${encodeURIComponent(UPHOLD_SCOPES)}&redirect_uri=${encodeURIComponent(UPHOLD_REDIRECT_URI)}&response_type=code&state=${Date.now()}`;
-  return "#";
+// Chart timeframe → CoinGecko days param
+const CHART_DAYS = { "1H":1, "24H":1, "7D":7, "30D":30, "6M":180, "1Y":365, "3Y":1095, "5Y":1825 };
+const CHART_INTERVALS = { "1H":"minutely", "24H":"hourly", "7D":"hourly", "30D":"daily", "6M":"daily", "1Y":"daily", "3Y":"daily", "5Y":"daily" };
+
+async function fetchCGChart(cgId, timeframe) {
+  const days = CHART_DAYS[timeframe] || 1;
+  const r = await fetch(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=${days}`);
+  if(!r.ok) throw new Error("CG chart");
+  const d = await r.json();
+  // Returns array of [timestamp, price]
+  return d.prices || [];
 }
-
-// ─── COINBASE ADVANCED TRADE API ─────────────────────────────────────────────
-// All calls go through /api/coinbase-trade.js (Vercel serverless function)
-// which signs requests with your COINBASE_API_KEY + COINBASE_API_SECRET env vars.
-// Set those in Vercel → Settings → Environment Variables to go live.
-
-// CB_LIVE is injected at build time by Vercel when REACT_APP_COINBASE_LIVE=true
-// If this reads as the literal string "true" the env var is set correctly
-const CB_LIVE = process.env.REACT_APP_COINBASE_LIVE === "true";
 
 async function cbCall(action, params = {}) {
   // When CB_LIVE is false (keys not yet set), run in paper/simulation mode
@@ -355,10 +380,7 @@ export default function SignalPulsePro() {
   const [authErr,setAuthErr]       = useState("");
   const [authBusy,setAuthBusy]     = useState(false);
   const [ownerInput,setOwnerInput] = useState("");
-  const [upholdConnected,setUpholdConnected] = useState(false);
-  const [upholdUser,setUpholdUser]           = useState(null);
-  const [upholdLoading,setUpholdLoading]     = useState(false);
-  const [upholdError,setUpholdError]         = useState("");
+
 
   const [prices,setPrices]         = useState({});
   const [histories,setHistories]   = useState({});
@@ -393,43 +415,20 @@ export default function SignalPulsePro() {
   const [deepBusy,setDeepBusy]     = useState({});
   const [adminUsers,setAdminUsers] = useState([]);
   const [taxYear,setTaxYear]       = useState(new Date().getFullYear());
+  const [marketData,setMarketData]   = useState([]);
+  const [marketLoading,setMarketLoading] = useState(false);
+  const [chartCoin,setChartCoin]     = useState(null);
+  const [chartData,setChartData]     = useState([]);
+  const [chartFrame,setChartFrame]   = useState("24H");
+  const [chartLoading,setChartLoading] = useState(false);
+  const [favorites,setFavorites]     = useState(()=>{ try{return JSON.parse(localStorage.getItem("sp_favorites")||"[]");}catch(_){return [];} });
+  const [marketFilter,setMarketFilter] = useState("all");
+  const [pushEnabled,setPushEnabled] = useState(false);
+  const [trialDaysLeft,setTrialDaysLeft] = useState(30);
 
   useEffect(()=>{ const t=setTimeout(()=>setScreen(S.LANDING),2000); return()=>clearTimeout(t); },[]);
 
-  // Handle Uphold OAuth callback token injected by Vercel function
-  useEffect(()=>{
-    const params=new URLSearchParams(window.location.search);
-    const token=params.get("uphold_token"), name=params.get("uphold_name");
-    if(token){ window.history.replaceState({},"",window.location.pathname); handleUpholdConnected(token, name||"Uphold User"); }
-  },[]);
 
-  const handleUpholdConnected = async(token, name)=>{
-    setUpholdLoading(true); setUpholdError("");
-    try {
-      const balances = await upholdFetchBalances(token);
-      setPortfolio(balances); setUpholdConnected(true); setUpholdUser({name, token});
-      if(screen===S.CONNECT) setScreen(S.MAIN);
-    } catch(e){ setUpholdError("Could not load wallet balances. Please try again."); }
-    setUpholdLoading(false);
-  };
-
-  const connectUphold = ()=>{
-    // REAL OAuth flow (activate when Uphold partner API approved):
-    // window.location.href = upholdGetAuthURL();
-
-    // Until partner API is approved, show a "coming soon" message
-    // instead of silently granting fake balances.
-    setUpholdError("Uphold live connection coming soon. Your real balances will appear here once the partner API is approved.");
-  };
-
-  const disconnectUphold = ()=>{ setUpholdConnected(false); setUpholdUser(null); setPortfolio({}); };
-
-  const refreshUpholdBalances = async()=>{
-    if(!upholdUser?.token) return;
-    setUpholdLoading(true);
-    try { const b=await upholdFetchBalances(upholdUser.token); setPortfolio(b); } catch(e){ setUpholdError("Refresh failed."); }
-    setUpholdLoading(false);
-  };
 
   const fetchMarket = useCallback(async()=>{
     setFetching(true);
@@ -464,6 +463,44 @@ export default function SignalPulsePro() {
     if(screen===S.MAIN){ fetchMarket(); priceRef.current=setInterval(fetchMarket,45000); return()=>clearInterval(priceRef.current); }
   },[screen,fetchMarket]);
 
+  const loadMarketData = useCallback(async()=>{
+    setMarketLoading(true);
+    try { const data=await fetchCGMarketData(COINS.map(c=>c.cgId)); setMarketData(data); } catch(_){}
+    setMarketLoading(false);
+  },[]);
+
+  useEffect(()=>{ if(tab==="market") loadMarketData(); },[tab,loadMarketData]);
+
+  useEffect(()=>{
+    if(!chartCoin) return;
+    setChartLoading(true); setChartData([]);
+    fetchCGChart(chartCoin.cgId,chartFrame).then(d=>setChartData(d)).catch(()=>setChartData([])).finally(()=>setChartLoading(false));
+  },[chartCoin,chartFrame]);
+
+  const toggleFavorite=(symbol)=>{
+    setFavorites(prev=>{ const n=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol]; localStorage.setItem("sp_favorites",JSON.stringify(n)); return n; });
+  };
+
+  const enablePush=async()=>{
+    if(!("Notification" in window)){alert("Push notifications not supported in this browser.");return;}
+    const perm=await Notification.requestPermission();
+    if(perm==="granted"){ setPushEnabled(true); localStorage.setItem("sp_push","true"); new Notification("SignalPulse Pro",{body:"Push notifications enabled! You'll get BUY/EXIT alerts on your favorites.",icon:"/favicon.ico"}); }
+  };
+
+  useEffect(()=>{
+    const savedPush=localStorage.getItem("sp_push")==="true";
+    if(savedPush&&Notification.permission==="granted") setPushEnabled(true);
+  },[]);
+
+  useEffect(()=>{
+    if(!pushEnabled||Notification.permission!=="granted") return;
+    Object.entries(signals).forEach(([sym,sig])=>{
+      if((sig.action==="BUY"||sig.action==="EXIT")&&favorites.includes(sym)){
+        new Notification(`${sig.action}: ${sym}`,{body:sig.reason,icon:"/favicon.ico"});
+      }
+    });
+  },[signals,pushEnabled]);
+
   const portfolioUSD = Object.entries(portfolio).reduce((s,[sym,h])=>{
     if(["USDC","USDT","DAI"].includes(sym)) return s+h.amount;
     const c=COINS.find(x=>x.symbol===sym); const p=c?prices[c.cgId]?.usd:0;
@@ -494,13 +531,13 @@ export default function SignalPulsePro() {
     setAuthBusy(true); setAuthErr("");
     try { const u=await signInGoogle(); setUser(u); setScreen(S.PAYWALL); }
     catch(e){ setAuthErr(e.message); }
-    setAuthBusy(false);
+    setAuthBusy(false); // session saved when trial/sub starts
   };
   const doOwnerKey = ()=>{
     if(ownerInput.trim()===OWNER_KEY){
       setIsOwner(true);
-      setUser({id:"owner",email:"owner@signalpulse.app",name:"Owner",subscribed:true,provider:"owner"});
-      setScreen(S.MAIN);
+      const ownerUser={id:"owner",email:"owner@signalpulse.app",name:"Owner",subscribed:true,provider:"owner"};
+      setUser(ownerUser); saveSession(ownerUser); setScreen(S.MAIN);
     } else { setAuthErr("Invalid owner key."); }
   };
 
@@ -806,6 +843,120 @@ export default function SignalPulsePro() {
     </div>
   );
 
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CHART SCREEN
+  // ══════════════════════════════════════════════════════════════════════════
+  if(screen==="chart"&&chartCoin) {
+    const price=prices[chartCoin.cgId]?.usd;
+    const change=prices[chartCoin.cgId]?.usd_24h_change||0;
+    const mkt=marketData.find(m=>m.id===chartCoin.cgId)||{};
+    const isFav=favorites.includes(chartCoin.symbol);
+    const frames=["1H","24H","7D","30D","6M","1Y","3Y","5Y"];
+
+    // Build SVG path from chart data
+    const buildPath=(pts,w,h)=>{
+      if(!pts||pts.length<2) return "";
+      const prices2=pts.map(p=>p[1]);
+      const mn=Math.min(...prices2),mx=Math.max(...prices2),rng=mx-mn||1;
+      return pts.map((p,i)=>{
+        const x=(i/(pts.length-1))*w;
+        const y=h-((p[1]-mn)/rng)*(h-20)-10;
+        return (i===0?"M":"L")+x.toFixed(1)+","+y.toFixed(1);
+      }).join(" ");
+    };
+
+    const w=380,h=180;
+    const path=buildPath(chartData,w,h);
+    const isUp=chartData.length>1?chartData[chartData.length-1][1]>=chartData[0][1]:change>=0;
+    const lineColor=isUp?T.green:T.red;
+    const priceDiff=chartData.length>1?chartData[chartData.length-1][1]-chartData[0][1]:0;
+    const priceDiffPct=chartData.length>1?((priceDiff/chartData[0][1])*100):change;
+
+    return (
+      <div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
+        <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+          <button style={backBtnStyle} onClick={()=>setScreen(S.MAIN)}>←</button>
+          <CoinAvatar coin={chartCoin} size={36}/>
+          <div style={{flex:1}}>
+            <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>{chartCoin.name}</h2>
+            <p style={{fontSize:12,color:T.t2,margin:0}}>{chartCoin.symbol} · Rank #{mkt.market_cap_rank||"–"}</p>
+          </div>
+          <button onClick={()=>toggleFavorite(chartCoin.symbol)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:isFav?T.gold:"rgba(255,255,255,.2)"}}>★</button>
+        </div>
+        <div style={{padding:"16px 16px 0"}}>
+          {/* Price header */}
+          <div style={{marginBottom:16}}>
+            <p style={{fontSize:36,fontWeight:800,fontFamily:FONT_NUM,margin:0,letterSpacing:"-.03em"}}>{usd(price)}</p>
+            <p style={{fontSize:14,color:priceDiffPct>=0?T.green2:T.red,fontWeight:600,margin:"4px 0 0"}}>
+              {priceDiffPct>=0?"+":""}{priceDiffPct.toFixed(2)}% · {priceDiff>=0?"+":""}{usd(Math.abs(priceDiff))} ({chartFrame})
+            </p>
+          </div>
+
+          {/* Timeframe tabs */}
+          <div style={{display:"flex",gap:4,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+            {frames.map(f=>(
+              <button key={f} onClick={()=>setChartFrame(f)}
+                style={{padding:"6px 12px",borderRadius:20,border:`1px solid ${chartFrame===f?T.accent:T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:12,fontWeight:600,flexShrink:0,
+                  background:chartFrame===f?"rgba(99,102,241,.2)":T.bg2,color:chartFrame===f?T.accent2:T.t3,transition:"all .2s"}}>
+                {f}
+              </button>
+            ))}
+          </div>
+
+          {/* Chart */}
+          <div style={{background:T.bg2,borderRadius:T.r1,padding:"16px 8px",marginBottom:16,border:`1px solid ${T.b1}`,position:"relative",overflow:"hidden"}}>
+            {chartLoading?(
+              <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{fontSize:24,color:T.accent,animation:"spin 1.2s linear infinite"}}>◈</div>
+              </div>
+            ):chartData.length>0?(
+              <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{overflow:"visible",display:"block"}}>
+                <defs>
+                  <linearGradient id="chartGrad" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor={lineColor} stopOpacity=".3"/>
+                    <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
+                  </linearGradient>
+                </defs>
+                {path&&<path d={path+"L"+w+","+h+"L0,"+h+"Z"} fill="url(#chartGrad)" opacity=".4"/>}
+                {path&&<path d={path} fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+              </svg>
+            ):(
+              <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <p style={{color:T.t3,fontSize:13}}>No chart data available</p>
+              </div>
+            )}
+          </div>
+
+          {/* Stats grid */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            {[
+              ["Market Cap",mkt.market_cap?`$${(mkt.market_cap/1e9).toFixed(2)}B`:"–",T.t1],
+              ["24H Volume",mkt.total_volume?`$${(mkt.total_volume/1e9).toFixed(2)}B`:"–",T.t1],
+              ["All Time High",mkt.ath?usd(mkt.ath):"–",T.green2],
+              ["ATH Date",mkt.ath_date?new Date(mkt.ath_date).toLocaleDateString():"–",T.t2],
+              ["All Time Low",mkt.atl?usd(mkt.atl):"–",T.red2],
+              ["ATL Date",mkt.atl_date?new Date(mkt.atl_date).toLocaleDateString():"–",T.t2],
+              ["Circulating Supply",mkt.circulating_supply?`${(mkt.circulating_supply/1e6).toFixed(2)}M ${chartCoin.symbol}`:"–",T.t2],
+              ["24H Change",mkt.price_change_percentage_24h?pct(mkt.price_change_percentage_24h):"–",mkt.price_change_percentage_24h>=0?T.green2:T.red],
+            ].map(([l,v,c])=>(
+              <Card key={l} style={{padding:12}}>
+                <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{l}</p>
+                <p style={{fontSize:14,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p>
+              </Card>
+            ))}
+          </div>
+
+          {/* Trade buttons */}
+          <div style={{display:"flex",gap:10}}>
+            <Btn variant="success" onClick={()=>openTrade(chartCoin,"buy")} style={{flex:1,width:"auto"}}>▲ Buy {chartCoin.symbol}</Btn>
+            <Btn variant="danger" onClick={()=>openTrade(chartCoin,"sell")} style={{flex:1,width:"auto"}}>▼ Sell {chartCoin.symbol}</Btn>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // TRADE SCREEN
   // ══════════════════════════════════════════════════════════════════════════
@@ -829,7 +980,7 @@ export default function SignalPulsePro() {
             <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Trade {tradeCoin.symbol}</h2>
             <p style={{fontSize:12,color:T.t2,margin:0}}>{usd(currentPrice)} · <span style={{color:change>=0?T.green2:T.red}}>{pct(change)}</span></p>
           </div>
-          {upholdConnected&&<Pill label="LIVE"/>}
+          {false&&<Pill label="LIVE"/>}
         </div>
         <div style={{padding:16}}>
 
@@ -1323,12 +1474,12 @@ export default function SignalPulsePro() {
           <p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{user?.email}</p>
           <p style={{fontSize:12,color:T.t3,margin:0}}>via {user?.provider} · {user?.subscribed?"Active":"Free"}</p>
         </Card>
-        <Card style={{marginBottom:12,borderColor:upholdConnected?"rgba(30,184,184,.3)":T.b1,background:upholdConnected?"rgba(30,184,184,.06)":T.bg2}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:upholdConnected?10:0}}>
-            <p style={{fontSize:11,color:upholdConnected?"#1EB8B8":T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Uphold Wallet</p>
-            <span style={{fontSize:11,fontWeight:600,color:upholdConnected?T.green2:T.t3}}>{upholdConnected?"● Connected":"Not connected"}</span>
+        <Card style={{marginBottom:12,borderColor:false?"rgba(30,184,184,.3)":T.b1,background:false?"rgba(30,184,184,.06)":T.bg2}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:false?10:0}}>
+            <p style={{fontSize:11,color:false?"#1EB8B8":T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Uphold Wallet</p>
+            <span style={{fontSize:11,fontWeight:600,color:false?T.green2:T.t3}}>{false?"● Connected":"Not connected"}</span>
           </div>
-          {upholdConnected?(<>
+          {false?(<>
             <p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{upholdUser?.name}</p>
             <p style={{fontSize:12,color:T.t3,margin:"0 0 10px"}}>Read-only · Balances synced</p>
             <div style={{display:"flex",gap:8}}>
@@ -1386,8 +1537,8 @@ export default function SignalPulsePro() {
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <h1 style={{fontSize:20,fontWeight:800,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.03em"}}>SignalPulse</h1>
                 {isOwner&&<Pill label="PRO"/>}
-                {user?.trial&&<Pill label="TRIAL"/>}
-                {upholdConnected&&<Pill label="LIVE"/>}
+                {user?.trial&&<span style={{fontSize:11,fontWeight:700,color:trialDaysLeft<=3?T.red:T.green2,background:trialDaysLeft<=3?'rgba(239,68,68,.1)':'rgba(16,185,129,.1)',padding:'2px 8px',borderRadius:10,border:`1px solid ${trialDaysLeft<=3?'rgba(239,68,68,.2)':'rgba(16,185,129,.2)'}`}}>{trialDaysLeft}d trial</span>}
+                {false&&<Pill label="LIVE"/>}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3}}>
                 <LiveDot active={!fetching}/>
@@ -1397,7 +1548,7 @@ export default function SignalPulsePro() {
               </div>
             </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              {upholdConnected?(
+              {false?(
                 <div style={{textAlign:"right"}}>
                   <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>Portfolio</p>
                   <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,color:T.green2,margin:"2px 0 0"}}>{usd(portfolioUSD)}</p>
@@ -1414,7 +1565,7 @@ export default function SignalPulsePro() {
 
           {/* Tabs */}
           <div style={{display:"flex",borderBottom:`1px solid ${T.b2}`}}>
-            {[["signals","Signals"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"],["tax","Tax"]].map(([id,lbl])=>(
+            {[["signals","Signals"],["market","Market"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"],["tax","Tax"]].map(([id,lbl])=>(
               <button key={id} onClick={()=>{ setTab(id); if(id==="alerts")markRead(); }}
                 style={{flex:1,padding:"10px 0 12px",fontSize:11,fontWeight:600,fontFamily:FONT_BODY,
                   border:"none",background:"none",cursor:"pointer",transition:"all .2s",
@@ -1452,6 +1603,7 @@ export default function SignalPulsePro() {
                     <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{cg.usd?usd(cg.usd):"–"}</p>
                     <p style={{fontSize:12,color:(cg.usd_24h_change||0)>=0?T.green2:T.red,margin:0,fontWeight:600}}>{pct(cg.usd_24h_change||0)}</p>
                   </div>
+                  </div>
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <Spark data={hist} color={coin.color} w={90} h={32}/>
@@ -1477,6 +1629,7 @@ export default function SignalPulsePro() {
                   {sig?.action==="HODL"&&(
                     <button style={{flex:2,padding:"10px",borderRadius:T.r3,fontFamily:FONT_BODY,border:`1px solid rgba(245,158,11,.25)`,background:"rgba(245,158,11,.07)",color:T.gold2,fontSize:13,fontWeight:600,cursor:"pointer"}}>◈ Holding</button>
                   )}
+                  <button onClick={()=>{setChartCoin(coin);setChartFrame("24H");setScreen("chart");}} style={{flex:1,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.25)`,background:"rgba(99,102,241,.08)",color:T.accent2,fontSize:13,fontWeight:600}}>📈</button>
                   <button onClick={()=>openDeep(coin)} style={{flex:1,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.25)`,background:"rgba(99,102,241,.08)",color:T.accent2,fontSize:13,fontWeight:600}}>AI ▸</button>
                 </div>
                 {/* Quick trade buttons */}
@@ -1488,6 +1641,89 @@ export default function SignalPulsePro() {
             );
           })}
 
+
+          {/* ── MARKET ── */}
+          {tab==="market"&&(
+            <div>
+              {/* Filter + Push */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <div style={{display:"flex",gap:6}}>
+                  {[["all","All"],["favorites","★ Favorites"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setMarketFilter(v)}
+                      style={{padding:"6px 14px",borderRadius:20,border:`1px solid ${marketFilter===v?T.accent:T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:12,fontWeight:600,
+                        background:marketFilter===v?"rgba(99,102,241,.15)":T.bg2,color:marketFilter===v?T.accent2:T.t3}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={enablePush}
+                  style={{padding:"6px 12px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.3)":T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:12,fontWeight:600,
+                    background:pushEnabled?"rgba(16,185,129,.1)":T.bg2,color:pushEnabled?T.green2:T.t3}}>
+                  {pushEnabled?"🔔 On":"🔔 Alerts"}
+                </button>
+              </div>
+
+              {/* Column headers */}
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 0.7fr",gap:8,padding:"0 4px",marginBottom:8}}>
+                {["Coin","Price","24H","★"].map(h=>(
+                  <p key={h} style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0,textAlign:h==="Price"||h==="24H"?"right":"left"}}>{h}</p>
+                ))}
+              </div>
+
+              {marketLoading&&!marketData.length&&[1,2,3,4,5,6].map(i=>(
+                <div key={i} style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:14,marginBottom:8,display:"flex",gap:12,alignItems:"center"}}>
+                  {[36,100,60,40].map((w,j)=><div key={j} style={{height:12,width:w,borderRadius:6,background:"rgba(255,255,255,.06)"}}/>)}
+                </div>
+              ))}
+
+              {(marketFilter==="all"?SIGNAL_COINS:SIGNAL_COINS.filter(c=>favorites.includes(c.symbol))).map(coin=>{
+                const cg=prices[coin.cgId]||{};
+                const mkt=marketData.find(m=>m.id===coin.cgId)||{};
+                const ch=cg.usd_24h_change||0;
+                const isFav=favorites.includes(coin.symbol);
+                const sig=signals[coin.symbol];
+                return (
+                  <div key={coin.symbol}
+                    style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",marginBottom:8,cursor:"pointer",transition:"all .2s"}}
+                    onClick={()=>{ setChartCoin(coin); setChartFrame("24H"); setScreen("chart"); }}>
+                    <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 0.7fr",gap:8,alignItems:"center"}}>
+                      {/* Coin info */}
+                      <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                        <CoinAvatar coin={coin} size={34}/>
+                        <div>
+                          <p style={{fontWeight:700,fontSize:14,margin:0,fontFamily:FONT_DISPLAY}}>{coin.symbol}</p>
+                          <p style={{fontSize:10,color:T.t3,margin:0}}>{mkt.market_cap_rank?"#"+mkt.market_cap_rank:coin.name.slice(0,8)}</p>
+                        </div>
+                      </div>
+                      {/* Price */}
+                      <div style={{textAlign:"right"}}>
+                        <p style={{fontSize:13,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{cg.usd?usd(cg.usd):"–"}</p>
+                        <p style={{fontSize:10,color:T.t3,margin:0}}>{mkt.market_cap?`$${(mkt.market_cap/1e9).toFixed(1)}B`:"–"}</p>
+                      </div>
+                      {/* 24H */}
+                      <div style={{textAlign:"right"}}>
+                        <p style={{fontSize:13,fontWeight:700,fontFamily:FONT_NUM,color:ch>=0?T.green2:T.red,margin:0}}>{pct(ch)}</p>
+                        {sig&&<Pill label={sig.action}/>}
+                      </div>
+                      {/* Favorite */}
+                      <div style={{textAlign:"right"}}>
+                        <button onClick={e=>{e.stopPropagation();toggleFavorite(coin.symbol);}}
+                          style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:isFav?T.gold:"rgba(255,255,255,.15)",padding:0}}>★</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {marketFilter==="favorites"&&favorites.length===0&&(
+                <Card style={{textAlign:"center",padding:"50px 20px"}}>
+                  <p style={{fontSize:32,marginBottom:12}}>★</p>
+                  <p style={{fontSize:15,fontWeight:600,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 6px"}}>No favorites yet</p>
+                  <p style={{fontSize:13,color:T.t2,margin:0}}>Tap the ★ on any coin to add it to your favorites.</p>
+                </Card>
+              )}
+            </div>
+          )}
           {/* ── ALERTS ── */}
           {tab==="alerts"&&(
             <div>
@@ -1524,7 +1760,7 @@ export default function SignalPulsePro() {
           {/* ── PORTFOLIO ── */}
           {tab==="portfolio"&&(
             <div>
-              {!upholdConnected?(
+              {!false?(
                 <Card style={{textAlign:"center",padding:"40px 20px",borderColor:"rgba(30,184,184,.2)",background:"rgba(30,184,184,.04)"}}>
                   <div style={{fontSize:40,marginBottom:14}}>🔗</div>
                   <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 8px"}}>Connect Your Wallet</p>
