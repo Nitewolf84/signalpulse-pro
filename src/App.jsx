@@ -188,19 +188,28 @@ async function cbFetchBalances() {
 
 // ─── CLAUDE AI ────────────────────────────────────────────────────────────────
 async function aiPivot(exitSymbol, priceMap, portfolio) {
-  const snap=COINS.map(c=>{const d=priceMap[c.cgId]||{};return `${c.symbol}: $${fmt(d.usd)} | 24h: ${(d.usd_24h_change||0).toFixed(2)}%`;}).join("\n");
-  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,
-      messages:[{role:"user",content:`Crypto day-trading AI. User exits ${exitSymbol}.\n${snap}\nHoldings: ${JSON.stringify(portfolio)}\nPick best pivot coin (NOT ${exitSymbol}, NOT stablecoin). Reply ONLY JSON:\n{"pivotCoin":"SYMBOL","confidence":82,"exitReason":"1 sentence","entryReason":"1 sentence","bullish":["f1","f2","f3"],"bearish":["r1","r2"],"targetGain":"+7.5%","timeframe":"4-12h","riskLevel":"MEDIUM","stableReason":"1 sentence"}`}]})});
-  const d=await r.json();
-  return JSON.parse((d.content||[]).map(b=>b.text||"").join("").replace(/```json|```/g,"").trim());
+  const r = await fetch("/api/ai-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "pivot",
+      payload: { exitSymbol, priceMap, portfolio, coins: COINS }
+    })
+  });
+  if (!r.ok) throw new Error("Pivot AI failed: " + r.status);
+  return r.json();
 }
 async function aiDeep(coin, price, change, history) {
-  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,
-      messages:[{role:"user",content:`Crypto advisor. ${coin.name} (${coin.symbol}) $${fmt(price)} | 24h: ${(change||0).toFixed(2)}%\nPrices: ${(history||[]).slice(-10).map(p=>"$"+fmt(p)).join(", ")}\nReply ONLY JSON:\n{"summary":"2 sentences","signal":"BUY|HODL|EXIT","confidence":78,"shortTermOutlook":"1-2 sentences","keyLevels":{"support":"$X","resistance":"$Y"},"bullish":["p1","p2","p3"],"bearish":["r1","r2"],"targetPrice":"$X","stopLoss":"$X","riskLevel":"LOW|MEDIUM|HIGH","holdPeriod":"time","action":"1 sentence"}`}]})});
-  const d=await r.json();
-  return JSON.parse((d.content||[]).map(b=>b.text||"").join("").replace(/```json|```/g,"").trim());
+  const r = await fetch("/api/ai-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "deep",
+      payload: { coin, price, change, history }
+    })
+  });
+  if (!r.ok) throw new Error("Deep AI failed: " + r.status);
+  return r.json();
 }
 
 // ─── TAX HELPERS ─────────────────────────────────────────────────────────────
@@ -426,12 +435,12 @@ export default function SignalPulsePro() {
   const [marketFilter,setMarketFilter] = useState("all");
   const [pushEnabled,setPushEnabled] = useState(false);
   const [trialDaysLeft,setTrialDaysLeft] = useState(30);
-  const [searchQuery,setSearchQuery]     = useState("");
-  const [walletAddress,setWalletAddress] = useState("");
-  const [walletType,setWalletType]       = useState("");
+  const [searchQuery,setSearchQuery]         = useState("");
+  const [walletAddress,setWalletAddress]     = useState("");
+  const [walletType,setWalletType]           = useState("");
   const [walletConnected,setWalletConnected] = useState(false);
-  const [phoneNumber,setPhoneNumber]     = useState("");
-  const [smsEnabled,setSmsEnabled]       = useState(false);
+  const [phoneNumber,setPhoneNumber]         = useState("");
+  const [smsEnabled,setSmsEnabled]           = useState(false);
 
   useEffect(()=>{ const t=setTimeout(()=>setScreen(S.LANDING),2000); return()=>clearTimeout(t); },[]);
 
