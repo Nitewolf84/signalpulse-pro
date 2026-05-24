@@ -29,6 +29,7 @@ const COINS = [
   { symbol:"USDT",  name:"Tether",        color:"#26A17B", cgId:"tether"           },
 ];
 const SIGNAL_COINS = COINS.filter(c=>!["USDC","USDT"].includes(c.symbol));
+const CB_LIVE = false; // Set REACT_APP_COINBASE_LIVE=true in Vercel to enable live trading
 
 const S = {
   SPLASH:"splash", LANDING:"landing", LOGIN:"login", SIGNUP:"signup",
@@ -1675,6 +1676,16 @@ export default function SignalPulsePro() {
   // ══════════════════════════════════════════════════════════════════════════
   // MAIN DASHBOARD
   // ══════════════════════════════════════════════════════════════════════════
+  if(screen!==S.MAIN) return (
+    <div style={{...appStyle,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}>
+      <style>{GOOGLE_FONTS}</style>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:28,color:T.accent,marginBottom:12,animation:"spin 1.2s linear infinite"}}>◈</div>
+        <p style={{fontSize:14,color:T.t3}}>Loading...</p>
+      </div>
+    </div>
+  );
+
   const taxData = computeTaxData(tradeLog.filter(t=>new Date(t.time).getFullYear()===taxYear));
 
   return (
