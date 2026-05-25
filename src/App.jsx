@@ -71,20 +71,14 @@ const saveUsers = u => localStorage.setItem(MOCK_KEY, JSON.stringify(u));
 async function signUpUser(email,password,name) {
   const users=getUsers();
   if(users.find(u=>u.email===email)) throw new Error("Email already registered.");
-  const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),
-    subscribed:false,trial:false,trialStart:null,provider:"email"};
+  const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),subscribed:false,trial:false,trialStart:null,provider:"email"};
   users.push(user); saveUsers(users); return user;
 }
 async function signInUser(email,password) { const user=getUsers().find(u=>u.email===email&&u.password===password); if(!user) throw new Error("Incorrect email or password."); return user; }
 async function signInGoogle() { return {id:"g_"+Date.now(),email:"demo@gmail.com",name:"Google User",subscribed:false,provider:"google",createdAt:new Date().toISOString()}; }
-function updateUserSub(userId,val,trialOverride) {
+function updateUserSub(userId,val) {
   const users=getUsers(),idx=users.findIndex(u=>u.id===userId);
-  if(idx>=0){
-    users[idx].subscribed=val;
-    if(trialOverride!==undefined) users[idx].trial=trialOverride;
-    saveUsers(users);
-    return users[idx];
-  }
+  if(idx>=0){users[idx].subscribed=val;if(!val){users[idx].trial=false;}saveUsers(users);return users[idx];}
 }
 
 async function fetchCGPrices() { const ids=COINS.map(c=>c.cgId).join(","); const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`); if(!r.ok) throw new Error("CG"); return r.json(); }
@@ -300,7 +294,14 @@ export default function SignalPulsePro(){
   const [smsEnabled,setSmsEnabled]=useState(false);
 
   useEffect(()=>{
-  // Auto-restore logged-in user from localStorage
+  // Track page visit
+  const visits = parseInt(localStorage.getItem("sp_visits")||"0")+1;
+  localStorage.setItem("sp_visits", visits.toString());
+  const today = new Date().toDateString();
+  const visitLog = JSON.parse(localStorage.getItem("sp_visit_log")||"[]");
+  visitLog.push(today);
+  localStorage.setItem("sp_visit_log", JSON.stringify(visitLog.slice(-365)));
+  // Auto-restore session
   const lastEmail=localStorage.getItem("sp_last_email");
   const sess=loadSession();
   if(lastEmail && sess?.subscribed !== undefined){
@@ -363,8 +364,7 @@ export default function SignalPulsePro(){
     const u=await signUpUser(authEmail.toLowerCase(),authPass,authName);
     saveSession(u);
     localStorage.setItem("sp_last_email",authEmail.toLowerCase());
-    setUser(u);
-    setScreen(S.PAYWALL);
+    setUser(u); setScreen(S.PAYWALL);
   }catch(e){setAuthErr(e.message);}
   setAuthBusy(false);
 };
@@ -373,9 +373,8 @@ export default function SignalPulsePro(){
   setAuthBusy(true);setAuthErr("");
   try{
     const u=await signInUser(authEmail.toLowerCase(),authPass);
-    // Merge saved session (trial/subscription status) into user
     const sess=loadSession();
-    const merged={...u, subscribed:sess?.subscribed??u.subscribed, trial:sess?.trial||u.trial||false, trialStart:sess?.trialStart||u.trialStart||null};
+    const merged={...u,subscribed:sess?.subscribed??u.subscribed,trial:sess?.trial||u.trial||false,trialStart:sess?.trialStart||u.trialStart||null};
     saveSession(merged);
     localStorage.setItem("sp_last_email",authEmail.toLowerCase());
     if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
@@ -471,28 +470,7 @@ export default function SignalPulsePro(){
 
   if(screen===S.LOGIN)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}><button style={backBtnStyle} onClick={()=>setScreen(S.LANDING)}>←</button><div><h2 style={{fontSize:20,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em"}}>Welcome back</h2><p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Sign in to your account</p></div></div><SocialBtn icon="G" label="Continue with Google" onClick={doGoogle}/><SocialBtn icon="🍎" label="Continue with Apple" onClick={()=>setAuthErr("Apple Sign In requires deployment.")}/><Divider label="or sign in with email"/><FormInput label="Email address" type="email" value={authEmail} onChange={setAuthEmail} placeholder="you@email.com" autoComplete="email"/><FormInput label="Password" type="password" value={authPass} onChange={setAuthPass} placeholder="Your password" autoComplete="current-password"/>{authErr&&<Card style={{marginBottom:14,borderColor:"rgba(239,68,68,.2)",background:"rgba(239,68,68,.06)",padding:12}}><p style={{fontSize:13,color:T.red,margin:0}}>{authErr}</p></Card>}<Btn onClick={doSignIn} disabled={authBusy}>{authBusy?"Signing in...":"Sign In →"}</Btn><p style={{textAlign:"center",marginTop:14,fontSize:13,color:T.t2}}>Don't have an account?{" "}<button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{setAuthErr("");setScreen(S.SIGNUP);}}>Sign up</button></p></div></div>);
 
-  if(screen===S.PAYWALL)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{textAlign:"center",marginBottom:28}}><p style={{fontSize:13,color:T.t2,marginBottom:6}}>Welcome, {user?.name||"Trader"} 👋</p><h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>Unlock SignalPulse Pro</h2><p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p></div><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.12),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:20}}><p style={{fontSize:22,margin:"0 0 6px"}}>🎁</p><p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>1 Month Free Trial</p><p style={{fontSize:13,color:T.t2,margin:"0 0 16px"}}>No credit card required. Full access for 30 days.</p><Btn variant="success" onClick={()=>{
-  const ts=Date.now();
-  const updated={...user,subscribed:true,trial:true,trialStart:ts};
-  // Persist trial into the users array so admin can see it
-  const users=getUsers();
-  const idx=users.findIndex(x=>x.id===user?.id);
-  if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:true,trialStart:ts};saveUsers(users);}
-  saveSession(updated);
-  localStorage.setItem("sp_last_email",updated.email||"");
-  setTrialDaysLeft(30);
-  setUser(updated);
-  setScreen(S.MAIN);
-}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}><p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p><Btn variant="paypal" onClick={()=>{
-  const updated={...user,subscribed:true,trial:false,trialStart:null};
-  const users=getUsers();
-  const idx=users.findIndex(x=>x.id===user?.id);
-  if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false};saveUsers(users);}
-  saveSession(updated);
-  localStorage.setItem("sp_last_email",updated.email||"");
-  setUser(updated);
-  setScreen(S.MAIN);
-}}>🅿 Subscribe with PayPal — $19.99/mo</Btn><p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p></Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
+  if(screen===S.PAYWALL)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{textAlign:"center",marginBottom:28}}><p style={{fontSize:13,color:T.t2,marginBottom:6}}>Welcome, {user?.name||"Trader"} 👋</p><h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>Unlock SignalPulse Pro</h2><p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p></div><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.12),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:20}}><p style={{fontSize:22,margin:"0 0 6px"}}>🎁</p><p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>1 Month Free Trial</p><p style={{fontSize:13,color:T.t2,margin:"0 0 16px"}}>No credit card required. Full access for 30 days.</p><Btn variant="success" onClick={()=>{setUser(p=>({...p,subscribed:true,trial:true,trialStart:Date.now()}));setScreen(S.MAIN);}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}><p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p><Btn variant="paypal" onClick={()=>{setUser(p=>({...p,subscribed:true,trial:false}));setScreen(S.MAIN);}}>🅿 Subscribe with PayPal — $19.99/mo</Btn><p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p></Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
 
   if(screen===S.CONNECT){
     const WALLET_TYPES=[
@@ -676,15 +654,324 @@ export default function SignalPulsePro(){
   }
 
   if(screen===S.ADMIN){
-    const allUsers=getUsers(),subCount=allUsers.filter(u=>u.subscribed).length;
-    return(<div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
-      <div style={{...hdrStyle,padding:"16px 18px",display:"flex",alignItems:"center",gap:12}}><button style={backBtnStyle} onClick={()=>setScreen(S.SETTINGS)}>←</button><h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em"}}>Admin Panel</h2><div style={{marginLeft:"auto"}}><Pill label="PRO"/></div></div>
-      <div style={{padding:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>{[["Total Users",allUsers.length,T.accent2],["Subscribed",subCount,T.green2],["Free",allUsers.length-subCount,T.gold2],["Monthly Rev",`$${(subCount*19.99).toFixed(0)}`,T.t1]].map(([l,v,c])=>(<Card key={l} style={{textAlign:"center",padding:14}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 6px"}}>{l}</p><p style={{fontSize:22,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p></Card>))}</div>
-        {allUsers.length===0&&<p style={{textAlign:"center",padding:"30px 0",color:T.t3,fontSize:14}}>No users yet.</p>}
-        {allUsers.map(u=>(<Card key={u.id} style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><p style={{fontWeight:600,fontSize:14,margin:"0 0 2px"}}>{u.name||"—"}</p><p style={{fontSize:12,color:T.t2,margin:"0 0 2px"}}>{u.email}</p><p style={{fontSize:11,color:T.t3,margin:0}}>{u.provider} · {new Date(u.createdAt).toLocaleDateString()}</p></div><div style={{display:"flex",gap:8,alignItems:"center"}}><Pill label={u.subscribed?(u.trial?"TRIAL":"PRO"):"FREE"}/><button onClick={()=>{updateUserSub(u.id,!u.subscribed);setAdminUsers(getUsers());}} style={{padding:"6px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid ${u.subscribed?"rgba(239,68,68,.3)":"rgba(16,185,129,.3)"}`,background:u.subscribed?"rgba(239,68,68,.1)":"rgba(16,185,129,.1)",color:u.subscribed?T.red:T.green2,fontSize:12,fontWeight:600}}>{u.subscribed?"Revoke":"Grant"}</button></div></Card>))}
+    const allUsers=getUsers();
+    const activeUsers=allUsers.filter(u=>u.subscribed&&!u.trial);
+    const trialUsers=allUsers.filter(u=>u.trial&&u.subscribed);
+    const freeUsers=allUsers.filter(u=>!u.subscribed);
+    const monthlyRev=activeUsers.length*19.99;
+    const annualRev=monthlyRev*12;
+    const totalVisits=parseInt(localStorage.getItem("sp_visits")||"0");
+    const visitLog=JSON.parse(localStorage.getItem("sp_visit_log")||"[]");
+    const today=new Date().toDateString();
+    const todayVisits=visitLog.filter(d=>d===today).length;
+    const thisMonth=new Date().toISOString().slice(0,7);
+    const monthVisits=visitLog.filter(d=>new Date(d).toISOString().slice(0,7)===thisMonth).length;
+    const [adminTab,setAdminTab]=useState("overview");
+
+    // 1099 export
+    const export1099=()=>{
+      const year=new Date().getFullYear()-1;
+      const header="Recipient Name,Email,Subscription Type,Start Date,Payments "+year+",Amount USD
+";
+      const rows=activeUsers.map(u=>`${u.name||"Unknown"},${u.email},Pro Monthly,${new Date(u.createdAt).toLocaleDateString()},12,$${(19.99*12).toFixed(2)}`).join("
+");
+      const trialRows=trialUsers.map(u=>`${u.name||"Unknown"},${u.email},Free Trial,${new Date(u.trialStart||u.createdAt).toLocaleDateString()},0,$0.00`).join("
+");
+      const blob=new Blob([header+rows+(rows?"
+":"")+trialRows],{type:"text/csv"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download=`signalpulse_1099_${year}.csv`;a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    return(
+      <div style={{...appStyle,paddingBottom:60}}><style>{GOOGLE_FONTS}</style>
+        <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+          <button style={backBtnStyle} onClick={()=>setScreen(S.SETTINGS)}>←</button>
+          <div style={{flex:1}}>
+            <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em"}}>Admin Panel</h2>
+            <p style={{fontSize:11,color:T.t3,margin:0}}>SignalPulse Pro · Owner View</p>
+          </div>
+          <Pill label="PRO"/>
+        </div>
+
+        {/* Admin Tab Bar */}
+        <div style={{display:"flex",borderBottom:`1px solid ${T.b2}`,background:`${T.bg0}ee`,backdropFilter:"blur(20px)"}}>
+          {[["overview","📊 Overview"],["users","👥 Users"],["revenue","💰 Revenue"],["tax","📋 1099 Tax"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setAdminTab(id)}
+              style={{flex:1,padding:"10px 4px",fontSize:10,fontWeight:600,fontFamily:FONT_BODY,border:"none",background:"none",cursor:"pointer",
+                color:adminTab===id?T.accent2:T.t3,borderBottom:`2px solid ${adminTab===id?T.accent:"transparent"}`,marginBottom:-1}}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        <div style={{padding:16}}>
+
+          {/* ── OVERVIEW TAB ── */}
+          {adminTab==="overview"&&(<>
+            {/* Website Traffic */}
+            <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>🌐 Website Traffic</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+              {[["Total Visits",totalVisits,T.accent2],["Today",todayVisits,T.green2],["This Month",monthVisits,T.blue]].map(([l,v,c])=>(
+                <Card key={l} style={{textAlign:"center",padding:12}}>
+                  <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em",margin:"0 0 6px",lineHeight:1.3}}>{l}</p>
+                  <p style={{fontSize:20,fontWeight:800,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p>
+                </Card>
+              ))}
+            </div>
+
+            {/* Conversion funnel */}
+            <Card style={{marginBottom:16}}>
+              <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>📈 Conversion Funnel</p>
+              {[
+                ["Visits",totalVisits,T.accent2,100],
+                ["Signed Up",allUsers.length,T.blue,totalVisits>0?Math.round(allUsers.length/totalVisits*100):0],
+                ["On Trial",trialUsers.length,T.gold2,allUsers.length>0?Math.round(trialUsers.length/allUsers.length*100):0],
+                ["Paid Active",activeUsers.length,T.green2,allUsers.length>0?Math.round(activeUsers.length/allUsers.length*100):0],
+              ].map(([l,v,c,pctVal])=>(
+                <div key={l} style={{marginBottom:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:12,color:T.t2,fontWeight:600}}>{l}</span>
+                    <span style={{fontSize:12,color:c,fontWeight:700,fontFamily:FONT_NUM}}>{v} <span style={{color:T.t3,fontWeight:400}}>({pctVal}%)</span></span>
+                  </div>
+                  <div style={{height:6,background:"rgba(255,255,255,.06)",borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pctVal}%`,height:"100%",background:c,borderRadius:3,transition:"width .8s"}}/>
+                  </div>
+                </div>
+              ))}
+            </Card>
+
+            {/* Account summary stats */}
+            <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>👥 Accounts</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+              {[
+                ["Total Accounts",allUsers.length,T.accent2],
+                ["Active (Paid)",activeUsers.length,T.green2],
+                ["On Free Trial",trialUsers.length,T.gold2],
+                ["Free / Inactive",freeUsers.length,T.t3],
+              ].map(([l,v,c])=>(
+                <Card key={l} style={{textAlign:"center",padding:14}}>
+                  <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em",margin:"0 0 6px",lineHeight:1.4}}>{l}</p>
+                  <p style={{fontSize:24,fontWeight:800,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p>
+                </Card>
+              ))}
+            </div>
+
+            {/* Revenue snapshot */}
+            <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>💰 Revenue</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+              {[
+                ["Monthly MRR","$"+monthlyRev.toFixed(2),T.green2],
+                ["Annual Run Rate","$"+annualRev.toFixed(0),T.accent2],
+              ].map(([l,v,c])=>(
+                <Card key={l} style={{textAlign:"center",padding:14,background:"linear-gradient(135deg,rgba(16,185,129,.08),rgba(99,102,241,.05))",borderColor:"rgba(16,185,129,.2)"}}>
+                  <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em",margin:"0 0 6px"}}>{l}</p>
+                  <p style={{fontSize:22,fontWeight:800,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p>
+                </Card>
+              ))}
+            </div>
+          </>)}
+
+          {/* ── USERS TAB ── */}
+          {adminTab==="users"&&(<>
+            <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>All Accounts ({allUsers.length})</p>
+            {allUsers.length===0&&(
+              <Card style={{textAlign:"center",padding:"40px 20px"}}>
+                <p style={{fontSize:32,marginBottom:8}}>👥</p>
+                <p style={{fontSize:14,color:T.t3}}>No users yet. Share your app!</p>
+              </Card>
+            )}
+            {allUsers.map(u=>{
+              const daysLeft=u.trial&&u.trialStart?getTrialDaysLeft(u.trialStart):null;
+              const trialExpired=u.trial&&u.trialStart&&daysLeft===0;
+              const statusLabel=u.subscribed?(u.trial?"TRIAL":"PRO"):"FREE";
+              return(
+                <Card key={u.id} style={{marginBottom:10,borderLeft:`3px solid ${u.subscribed?(u.trial?T.gold:T.green):(trialExpired?T.red:T.t4)}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <p style={{fontWeight:700,fontSize:14,margin:"0 0 2px",color:T.t1}}>{u.name||"—"}</p>
+                      <p style={{fontSize:12,color:T.t2,margin:"0 0 2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</p>
+                      <p style={{fontSize:11,color:T.t3,margin:0}}>
+                        {u.provider} · Joined {new Date(u.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <Pill label={statusLabel}/>
+                  </div>
+
+                  {/* Trial progress bar */}
+                  {u.trial&&u.trialStart&&(
+                    <div style={{marginBottom:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <span style={{fontSize:11,color:daysLeft<=3?T.red:T.gold2,fontWeight:600}}>
+                          {daysLeft>0?`⏱ ${daysLeft} days left in trial`:"⚠️ Trial expired"}
+                        </span>
+                        <span style={{fontSize:11,color:T.t3}}>
+                          Started {new Date(u.trialStart).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div style={{height:4,background:"rgba(255,255,255,.06)",borderRadius:2,overflow:"hidden"}}>
+                        <div style={{width:`${Math.max(0,(daysLeft/30)*100)}%`,height:"100%",
+                          background:daysLeft<=3?"linear-gradient(90deg,#EF4444,#F87171)":"linear-gradient(90deg,#F59E0B,#FCD34D)",
+                          borderRadius:2,transition:"width .5s"}}/>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>{updateUserSub(u.id,!u.subscribed);setAdminUsers(getUsers());}}
+                      style={{flex:1,padding:"7px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
+                        border:`1px solid ${u.subscribed?"rgba(239,68,68,.3)":"rgba(16,185,129,.3)"}`,
+                        background:u.subscribed?"rgba(239,68,68,.08)":"rgba(16,185,129,.08)",
+                        color:u.subscribed?T.red:T.green2,fontSize:11,fontWeight:700}}>
+                      {u.subscribed?"Revoke Access":"Grant Access"}
+                    </button>
+                    {u.trial&&(
+                      <button onClick={()=>{
+                        const users=getUsers(),idx=users.findIndex(x=>x.id===u.id);
+                        if(idx>=0){users[idx].trial=false;users[idx].subscribed=true;saveUsers(users);}
+                        setAdminUsers(getUsers());
+                      }} style={{flex:1,padding:"7px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
+                        border:"1px solid rgba(99,102,241,.3)",background:"rgba(99,102,241,.08)",
+                        color:T.accent2,fontSize:11,fontWeight:700}}>
+                        Convert → PRO
+                      </button>
+                    )}
+                    {!u.trial&&!u.subscribed&&(
+                      <button onClick={()=>{
+                        const users=getUsers(),idx=users.findIndex(x=>x.id===u.id);
+                        if(idx>=0){users[idx].trial=true;users[idx].trialStart=Date.now();users[idx].subscribed=true;saveUsers(users);}
+                        setAdminUsers(getUsers());
+                      }} style={{flex:1,padding:"7px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
+                        border:"1px solid rgba(245,158,11,.3)",background:"rgba(245,158,11,.08)",
+                        color:T.gold2,fontSize:11,fontWeight:700}}>
+                        Start Trial
+                      </button>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </>)}
+
+          {/* ── REVENUE TAB ── */}
+          {adminTab==="revenue"&&(<>
+            <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(16,185,129,.1),rgba(99,102,241,.07))",borderColor:"rgba(16,185,129,.3)",padding:20,textAlign:"center"}}>
+              <p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 6px"}}>Monthly Recurring Revenue</p>
+              <p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.04em"}}>${monthlyRev.toFixed(2)}</p>
+              <p style={{fontSize:13,color:T.t3,margin:0}}>{activeUsers.length} paid subscribers × $19.99/mo</p>
+            </Card>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              {[
+                ["Annual Run Rate","$"+annualRev.toFixed(0),T.accent2],
+                ["Avg per User","$19.99",T.t1],
+                ["Trial Pipeline",trialUsers.length+" users",T.gold2],
+                ["Potential MRR","$"+((activeUsers.length+trialUsers.length)*19.99).toFixed(0),T.green2],
+              ].map(([l,v,c])=>(
+                <Card key={l} style={{textAlign:"center",padding:14}}>
+                  <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em",margin:"0 0 6px",lineHeight:1.4}}>{l}</p>
+                  <p style={{fontSize:18,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p>
+                </Card>
+              ))}
+            </div>
+
+            <Card style={{marginBottom:14}}>
+              <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>💳 Subscriber Breakdown</p>
+              {activeUsers.length===0?(
+                <p style={{fontSize:13,color:T.t3,textAlign:"center",padding:"20px 0",margin:0}}>No paid subscribers yet.</p>
+              ):activeUsers.map(u=>(
+                <div key={u.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.b2}`}}>
+                  <div>
+                    <p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>{u.name||"—"}</p>
+                    <p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>{u.email}</p>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <p style={{fontSize:13,fontWeight:700,color:T.green2,margin:0,fontFamily:FONT_NUM}}>$19.99/mo</p>
+                    <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>Since {new Date(u.createdAt).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              ))}
+            </Card>
+          </>)}
+
+          {/* ── 1099 TAX TAB ── */}
+          {adminTab==="tax"&&(<>
+            <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(245,158,11,.08),rgba(99,102,241,.06))",borderColor:"rgba(245,158,11,.3)",padding:20}}>
+              <p style={{fontSize:16,fontWeight:800,color:T.gold,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>📋 1099 Tax Forms</p>
+              <p style={{fontSize:12,color:T.t2,margin:"0 0 16px",lineHeight:1.6}}>
+                Export subscriber payment data for year-end 1099-K or 1099-NEC filing. Review with your accountant before filing.
+              </p>
+              <div style={{background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",borderRadius:T.r3,padding:"10px 12px",marginBottom:16}}>
+                <p style={{fontSize:11,color:T.gold2,fontWeight:700,margin:"0 0 4px"}}>⚠️ Important Disclaimer</p>
+                <p style={{fontSize:11,color:T.t3,margin:0,lineHeight:1.6}}>This export is for your records only. Consult a licensed CPA or tax professional before filing. Requirements vary based on your business structure and jurisdiction. Amounts over $600/year per subscriber may require a 1099-NEC.</p>
+              </div>
+              <button onClick={export1099}
+                style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#D97706,#F59E0B)",border:"none",borderRadius:T.r3,color:"#000",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:FONT_BODY,marginBottom:8}}>
+                ⬇ Export 1099 CSV — {new Date().getFullYear()-1} Tax Year
+              </button>
+              <p style={{fontSize:11,color:T.t3,textAlign:"center",margin:0}}>Compatible with TurboTax, H&R Block, QuickBooks</p>
+            </Card>
+
+            {/* Tax summary */}
+            <Card style={{marginBottom:14}}>
+              <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Tax Year Summary — {new Date().getFullYear()-1}</p>
+              {[
+                ["Gross Revenue","$"+(monthlyRev*12).toFixed(2),T.green2],
+                ["Paid Subscribers",activeUsers.length,T.t1],
+                ["Platform Fee (est 2.9%)","$"+((monthlyRev*12)*0.029).toFixed(2),T.red2],
+                ["Net Revenue (est)","$"+((monthlyRev*12)*0.971).toFixed(2),T.green2],
+              ].map(([l,v,c])=>(
+                <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.b2}`}}>
+                  <span style={{fontSize:13,color:T.t2}}>{l}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:c,fontFamily:FONT_NUM}}>{v}</span>
+                </div>
+              ))}
+            </Card>
+
+            {/* Per-user breakdown */}
+            <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Per-Subscriber Breakdown</p>
+            {activeUsers.length===0?(
+              <Card style={{textAlign:"center",padding:"30px 20px"}}>
+                <p style={{fontSize:13,color:T.t3,margin:0}}>No paid subscribers yet — nothing to report.</p>
+              </Card>
+            ):activeUsers.map(u=>(
+              <Card key={u.id} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div>
+                    <p style={{fontWeight:700,fontSize:13,margin:"0 0 2px"}}>{u.name||"Unknown"}</p>
+                    <p style={{fontSize:11,color:T.t2,margin:"0 0 2px"}}>{u.email}</p>
+                    <p style={{fontSize:10,color:T.t3,margin:0}}>Sub since {new Date(u.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <p style={{fontSize:14,fontWeight:800,color:T.green2,margin:0,fontFamily:FONT_NUM}}>$239.88</p>
+                    <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>12 × $19.99</p>
+                  </div>
+                </div>
+              </Card>
+            ))}
+
+            {trialUsers.length>0&&(<>
+              <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,marginTop:6}}>Trial Users (No Payment)</p>
+              {trialUsers.map(u=>(
+                <Card key={u.id} style={{marginBottom:10,borderLeft:`3px solid ${T.t4}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <p style={{fontWeight:600,fontSize:13,margin:"0 0 2px"}}>{u.name||"Unknown"}</p>
+                      <p style={{fontSize:11,color:T.t2,margin:0}}>{u.email}</p>
+                    </div>
+                    <span style={{fontSize:12,color:T.t3,fontWeight:600}}>$0.00</span>
+                  </div>
+                </Card>
+              ))}
+            </>)}
+          </>)}
+
+        </div>
       </div>
-    </div>);
+    );
   }
 
   if(screen===S.PIVOT){
@@ -777,7 +1064,8 @@ export default function SignalPulsePro(){
       <Btn variant="danger" onClick={()=>{
   clearSession();
   localStorage.removeItem("sp_last_email");
-  setUser(null);setIsOwner(false);setWalletConnected(false);setWalletAddress("");setWalletType("");
+  setUser(null);setIsOwner(false);
+  setWalletConnected(false);setWalletAddress("");setWalletType("");
   setScreen(S.LANDING);
 }}>Sign Out</Btn>
     </div>
