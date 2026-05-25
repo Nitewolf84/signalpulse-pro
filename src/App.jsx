@@ -668,17 +668,13 @@ export default function SignalPulsePro(){
     const monthVisits=visitLog.filter(d=>new Date(d).toISOString().slice(0,7)===thisMonth).length;
     const [adminTab,setAdminTab]=useState("overview");
 
-    // 1099 export
     const export1099=()=>{
       const year=new Date().getFullYear()-1;
-      const header="Recipient Name,Email,Subscription Type,Start Date,Payments "+year+",Amount USD
-";
-      const rows=activeUsers.map(u=>`${u.name||"Unknown"},${u.email},Pro Monthly,${new Date(u.createdAt).toLocaleDateString()},12,$${(19.99*12).toFixed(2)}`).join("
-");
-      const trialRows=trialUsers.map(u=>`${u.name||"Unknown"},${u.email},Free Trial,${new Date(u.trialStart||u.createdAt).toLocaleDateString()},0,$0.00`).join("
-");
-      const blob=new Blob([header+rows+(rows?"
-":"")+trialRows],{type:"text/csv"});
+      const nl="\n";
+      const header=`Recipient Name,Email,Subscription Type,Start Date,Payments ${year},Amount USD${nl}`;
+      const rows=activeUsers.map(u=>`${u.name||"Unknown"},${u.email},Pro Monthly,${new Date(u.createdAt).toLocaleDateString()},12,$${(19.99*12).toFixed(2)}`).join(nl);
+      const trialRows=trialUsers.map(u=>`${u.name||"Unknown"},${u.email},Free Trial,${new Date(u.trialStart||u.createdAt).toLocaleDateString()},0,$0.00`).join(nl);
+      const blob=new Blob([header+rows+(rows?nl:"")+trialRows],{type:"text/csv"});
       const url=URL.createObjectURL(blob);
       const a=document.createElement("a");
       a.href=url;a.download=`signalpulse_1099_${year}.csv`;a.click();
