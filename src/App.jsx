@@ -68,10 +68,24 @@ function clearSession() { localStorage.removeItem(SESSION_KEY); }
 function getTrialDaysLeft(trialStart) { if(!trialStart) return 0; return Math.max(0, Math.ceil(30-(Date.now()-trialStart)/(1000*60*60*24))); }
 const getUsers = () => { try { return JSON.parse(localStorage.getItem(MOCK_KEY)||"[]"); } catch(_){ return []; } };
 const saveUsers = u => localStorage.setItem(MOCK_KEY, JSON.stringify(u));
-async function signUpUser(email,password,name) { const users=getUsers(); if(users.find(u=>u.email===email)) throw new Error("Email already registered."); const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),subscribed:false,provider:"email"}; users.push(user); saveUsers(users); return user; }
+async function signUpUser(email,password,name) {
+  const users=getUsers();
+  if(users.find(u=>u.email===email)) throw new Error("Email already registered.");
+  const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),
+    subscribed:false,trial:false,trialStart:null,provider:"email"};
+  users.push(user); saveUsers(users); return user;
+}
 async function signInUser(email,password) { const user=getUsers().find(u=>u.email===email&&u.password===password); if(!user) throw new Error("Incorrect email or password."); return user; }
 async function signInGoogle() { return {id:"g_"+Date.now(),email:"demo@gmail.com",name:"Google User",subscribed:false,provider:"google",createdAt:new Date().toISOString()}; }
-function updateUserSub(userId,val) { const users=getUsers(),idx=users.findIndex(u=>u.id===userId); if(idx>=0){users[idx].subscribed=val;saveUsers(users);return users[idx];} }
+function updateUserSub(userId,val,trialOverride) {
+  const users=getUsers(),idx=users.findIndex(u=>u.id===userId);
+  if(idx>=0){
+    users[idx].subscribed=val;
+    if(trialOverride!==undefined) users[idx].trial=trialOverride;
+    saveUsers(users);
+    return users[idx];
+  }
+}
 
 async function fetchCGPrices() { const ids=COINS.map(c=>c.cgId).join(","); const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`); if(!r.ok) throw new Error("CG"); return r.json(); }
 async function fetchCGMarketData(cgIds) { const ids=cgIds.join(","); const r=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=50&page=1&sparkline=false&price_change_percentage=1h,24h,7d,30d`); if(!r.ok) throw new Error("CG markets"); return r.json(); }
@@ -285,7 +299,24 @@ export default function SignalPulsePro(){
   const [phoneNumber,setPhoneNumber]=useState("");
   const [smsEnabled,setSmsEnabled]=useState(false);
 
-  useEffect(()=>{const t=setTimeout(()=>setScreen(S.LANDING),2000);return()=>clearTimeout(t);},[]);
+  useEffect(()=>{
+  // Auto-restore logged-in user from localStorage
+  const lastEmail=localStorage.getItem("sp_last_email");
+  const sess=loadSession();
+  if(lastEmail && sess?.subscribed !== undefined){
+    const users=getUsers();
+    const u=users.find(x=>x.email===lastEmail);
+    if(u){
+      const merged={...u, subscribed:sess.subscribed, trial:sess.trial||false, trialStart:sess.trialStart||null};
+      setUser(merged);
+      if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
+      setTimeout(()=>setScreen(merged.subscribed?S.MAIN:S.PAYWALL),2000);
+      return;
+    }
+  }
+  const t=setTimeout(()=>setScreen(S.LANDING),2000);
+  return()=>clearTimeout(t);
+},[]);
 
   const fetchMarket=useCallback(async()=>{
     setFetching(true);
@@ -324,8 +355,35 @@ export default function SignalPulsePro(){
   const portfolioUSD=Object.entries(portfolio).reduce((s,[sym,h])=>{if(["USDC","USDT","DAI"].includes(sym))return s+h.amount;const c=COINS.find(x=>x.symbol===sym);const p=c?prices[c.cgId]?.usd:0;return s+(p?h.amount*p:0);},0);
   const portfolioPnL=Object.entries(portfolio).reduce((s,[sym,h])=>{if(["USDC","USDT","DAI"].includes(sym))return s;const c=COINS.find(x=>x.symbol===sym);const p=c?prices[c.cgId]?.usd:0;if(!p||!h.avgBuy)return s;return s+((p-h.avgBuy)*h.amount);},0);
 
-  const doSignUp=async()=>{if(!authName||!authEmail||!authPass){setAuthErr("All fields are required.");return;}if(authPass.length<6){setAuthErr("Password must be at least 6 characters.");return;}setAuthBusy(true);setAuthErr("");try{const u=await signUpUser(authEmail.toLowerCase(),authPass,authName);setUser(u);setScreen(S.PAYWALL);}catch(e){setAuthErr(e.message);}setAuthBusy(false);};
-  const doSignIn=async()=>{if(!authEmail||!authPass){setAuthErr("Email and password are required.");return;}setAuthBusy(true);setAuthErr("");try{const u=await signInUser(authEmail.toLowerCase(),authPass);setUser(u);setScreen(u.subscribed||isOwner?S.MAIN:S.PAYWALL);}catch(e){setAuthErr(e.message);}setAuthBusy(false);};
+  const doSignUp=async()=>{
+  if(!authName||!authEmail||!authPass){setAuthErr("All fields are required.");return;}
+  if(authPass.length<6){setAuthErr("Password must be at least 6 characters.");return;}
+  setAuthBusy(true);setAuthErr("");
+  try{
+    const u=await signUpUser(authEmail.toLowerCase(),authPass,authName);
+    saveSession(u);
+    localStorage.setItem("sp_last_email",authEmail.toLowerCase());
+    setUser(u);
+    setScreen(S.PAYWALL);
+  }catch(e){setAuthErr(e.message);}
+  setAuthBusy(false);
+};
+  const doSignIn=async()=>{
+  if(!authEmail||!authPass){setAuthErr("Email and password are required.");return;}
+  setAuthBusy(true);setAuthErr("");
+  try{
+    const u=await signInUser(authEmail.toLowerCase(),authPass);
+    // Merge saved session (trial/subscription status) into user
+    const sess=loadSession();
+    const merged={...u, subscribed:sess?.subscribed??u.subscribed, trial:sess?.trial||u.trial||false, trialStart:sess?.trialStart||u.trialStart||null};
+    saveSession(merged);
+    localStorage.setItem("sp_last_email",authEmail.toLowerCase());
+    if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
+    setUser(merged);
+    setScreen(merged.subscribed||isOwner?S.MAIN:S.PAYWALL);
+  }catch(e){setAuthErr(e.message);}
+  setAuthBusy(false);
+};
   const doGoogle=async()=>{setAuthBusy(true);setAuthErr("");try{const u=await signInGoogle();setUser(u);setScreen(S.PAYWALL);}catch(e){setAuthErr(e.message);}setAuthBusy(false);};
   const doOwnerKey=()=>{if(ownerInput.trim()===OWNER_KEY){setIsOwner(true);const ownerUser={id:"owner",email:"owner@signalpulse.app",name:"Owner",subscribed:true,provider:"owner"};setUser(ownerUser);saveSession(ownerUser);setScreen(S.MAIN);}else{setAuthErr("Invalid owner key.");}};
 
@@ -413,7 +471,28 @@ export default function SignalPulsePro(){
 
   if(screen===S.LOGIN)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}><button style={backBtnStyle} onClick={()=>setScreen(S.LANDING)}>←</button><div><h2 style={{fontSize:20,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em"}}>Welcome back</h2><p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Sign in to your account</p></div></div><SocialBtn icon="G" label="Continue with Google" onClick={doGoogle}/><SocialBtn icon="🍎" label="Continue with Apple" onClick={()=>setAuthErr("Apple Sign In requires deployment.")}/><Divider label="or sign in with email"/><FormInput label="Email address" type="email" value={authEmail} onChange={setAuthEmail} placeholder="you@email.com" autoComplete="email"/><FormInput label="Password" type="password" value={authPass} onChange={setAuthPass} placeholder="Your password" autoComplete="current-password"/>{authErr&&<Card style={{marginBottom:14,borderColor:"rgba(239,68,68,.2)",background:"rgba(239,68,68,.06)",padding:12}}><p style={{fontSize:13,color:T.red,margin:0}}>{authErr}</p></Card>}<Btn onClick={doSignIn} disabled={authBusy}>{authBusy?"Signing in...":"Sign In →"}</Btn><p style={{textAlign:"center",marginTop:14,fontSize:13,color:T.t2}}>Don't have an account?{" "}<button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{setAuthErr("");setScreen(S.SIGNUP);}}>Sign up</button></p></div></div>);
 
-  if(screen===S.PAYWALL)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{textAlign:"center",marginBottom:28}}><p style={{fontSize:13,color:T.t2,marginBottom:6}}>Welcome, {user?.name||"Trader"} 👋</p><h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>Unlock SignalPulse Pro</h2><p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p></div><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.12),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:20}}><p style={{fontSize:22,margin:"0 0 6px"}}>🎁</p><p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>1 Month Free Trial</p><p style={{fontSize:13,color:T.t2,margin:"0 0 16px"}}>No credit card required. Full access for 30 days.</p><Btn variant="success" onClick={()=>{setUser(p=>({...p,subscribed:true,trial:true,trialStart:Date.now()}));setScreen(S.MAIN);}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}><p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p><Btn variant="paypal" onClick={()=>{setUser(p=>({...p,subscribed:true,trial:false}));setScreen(S.MAIN);}}>🅿 Subscribe with PayPal — $19.99/mo</Btn><p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p></Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
+  if(screen===S.PAYWALL)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{textAlign:"center",marginBottom:28}}><p style={{fontSize:13,color:T.t2,marginBottom:6}}>Welcome, {user?.name||"Trader"} 👋</p><h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>Unlock SignalPulse Pro</h2><p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p></div><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.12),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:20}}><p style={{fontSize:22,margin:"0 0 6px"}}>🎁</p><p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>1 Month Free Trial</p><p style={{fontSize:13,color:T.t2,margin:"0 0 16px"}}>No credit card required. Full access for 30 days.</p><Btn variant="success" onClick={()=>{
+  const ts=Date.now();
+  const updated={...user,subscribed:true,trial:true,trialStart:ts};
+  // Persist trial into the users array so admin can see it
+  const users=getUsers();
+  const idx=users.findIndex(x=>x.id===user?.id);
+  if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:true,trialStart:ts};saveUsers(users);}
+  saveSession(updated);
+  localStorage.setItem("sp_last_email",updated.email||"");
+  setTrialDaysLeft(30);
+  setUser(updated);
+  setScreen(S.MAIN);
+}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}><p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p><Btn variant="paypal" onClick={()=>{
+  const updated={...user,subscribed:true,trial:false,trialStart:null};
+  const users=getUsers();
+  const idx=users.findIndex(x=>x.id===user?.id);
+  if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false};saveUsers(users);}
+  saveSession(updated);
+  localStorage.setItem("sp_last_email",updated.email||"");
+  setUser(updated);
+  setScreen(S.MAIN);
+}}>🅿 Subscribe with PayPal — $19.99/mo</Btn><p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p></Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
 
   if(screen===S.CONNECT){
     const WALLET_TYPES=[
@@ -603,7 +682,7 @@ export default function SignalPulsePro(){
       <div style={{padding:16}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>{[["Total Users",allUsers.length,T.accent2],["Subscribed",subCount,T.green2],["Free",allUsers.length-subCount,T.gold2],["Monthly Rev",`$${(subCount*19.99).toFixed(0)}`,T.t1]].map(([l,v,c])=>(<Card key={l} style={{textAlign:"center",padding:14}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 6px"}}>{l}</p><p style={{fontSize:22,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p></Card>))}</div>
         {allUsers.length===0&&<p style={{textAlign:"center",padding:"30px 0",color:T.t3,fontSize:14}}>No users yet.</p>}
-        {allUsers.map(u=>(<Card key={u.id} style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><p style={{fontWeight:600,fontSize:14,margin:"0 0 2px"}}>{u.name||"—"}</p><p style={{fontSize:12,color:T.t2,margin:"0 0 2px"}}>{u.email}</p><p style={{fontSize:11,color:T.t3,margin:0}}>{u.provider} · {new Date(u.createdAt).toLocaleDateString()}</p></div><div style={{display:"flex",gap:8,alignItems:"center"}}><Pill label={u.subscribed?"PRO":"FREE"}/><button onClick={()=>{updateUserSub(u.id,!u.subscribed);setAdminUsers(getUsers());}} style={{padding:"6px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid ${u.subscribed?"rgba(239,68,68,.3)":"rgba(16,185,129,.3)"}`,background:u.subscribed?"rgba(239,68,68,.1)":"rgba(16,185,129,.1)",color:u.subscribed?T.red:T.green2,fontSize:12,fontWeight:600}}>{u.subscribed?"Revoke":"Grant"}</button></div></Card>))}
+        {allUsers.map(u=>(<Card key={u.id} style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><p style={{fontWeight:600,fontSize:14,margin:"0 0 2px"}}>{u.name||"—"}</p><p style={{fontSize:12,color:T.t2,margin:"0 0 2px"}}>{u.email}</p><p style={{fontSize:11,color:T.t3,margin:0}}>{u.provider} · {new Date(u.createdAt).toLocaleDateString()}</p></div><div style={{display:"flex",gap:8,alignItems:"center"}}><Pill label={u.subscribed?(u.trial?"TRIAL":"PRO"):"FREE"}/><button onClick={()=>{updateUserSub(u.id,!u.subscribed);setAdminUsers(getUsers());}} style={{padding:"6px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid ${u.subscribed?"rgba(239,68,68,.3)":"rgba(16,185,129,.3)"}`,background:u.subscribed?"rgba(239,68,68,.1)":"rgba(16,185,129,.1)",color:u.subscribed?T.red:T.green2,fontSize:12,fontWeight:600}}>{u.subscribed?"Revoke":"Grant"}</button></div></Card>))}
       </div>
     </div>);
   }
@@ -695,7 +774,12 @@ export default function SignalPulsePro(){
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p><p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>{isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}</p>{user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}{!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}{user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}</Card>
       {isOwner&&<Btn variant="secondary" onClick={()=>{setAdminUsers(getUsers());setScreen(S.ADMIN);}} style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⚙️ System</p><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Market Data</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>CoinGecko · 45s refresh</span></div><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Trading Engine</span><span style={{fontSize:11,fontWeight:700,color:cbKeysSaved?T.green2:T.gold2,background:cbKeysSaved?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${cbKeysSaved?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{cbKeysSaved?"LIVE":"PAPER"}</span></div><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:T.t2}}>AI Engine</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>Claude Sonnet 4</span></div></Card>
-      <Btn variant="danger" onClick={()=>{setUser(null);setIsOwner(false);setScreen(S.LANDING);}}>Sign Out</Btn>
+      <Btn variant="danger" onClick={()=>{
+  clearSession();
+  localStorage.removeItem("sp_last_email");
+  setUser(null);setIsOwner(false);setWalletConnected(false);setWalletAddress("");setWalletType("");
+  setScreen(S.LANDING);
+}}>Sign Out</Btn>
     </div>
   </div>);
 
