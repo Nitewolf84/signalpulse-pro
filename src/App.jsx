@@ -347,7 +347,7 @@ export default function SignalPulsePro(){
   const [walletAddress,setWalletAddress]=useState(()=>localStorage.getItem("sp_wallet_addr")||"");
   const [walletType,setWalletType]=useState(()=>localStorage.getItem("sp_wallet_type")||"");
   const [walletProvider,setWalletProvider]=useState(()=>localStorage.getItem("sp_wallet_provider")||"");
-  const [walletConnected,setWalletConnected]=useState(()=>!!(localStorage.getItem("sp_wallet_addr")));
+  const [walletConnected,setWalletConnected]=useState(()=>{const a=localStorage.getItem("sp_wallet_addr");return !!(a&&a.length>4);});
   const [walletTx,setWalletTx]=useState(null);
   const [walletManualInput,setWalletManualInput]=useState("");
   const [cbApiKey,setCbApiKey]=useState(()=>sessionStorage.getItem("sp_cb_key")||"");
@@ -525,6 +525,18 @@ export default function SignalPulsePro(){
     setCbApiKey("");setCbApiSecret("");setCbKeysSaved(false);
   };
 
+  const disconnectWallet=()=>{
+    const provider=localStorage.getItem("sp_wallet_provider")||walletProvider;
+    if(provider){
+      localStorage.removeItem("sp_wallet_addr_"+provider);
+    }
+    ["sp_wallet_addr","sp_wallet_type","sp_wallet_provider"].forEach(k=>localStorage.removeItem(k));
+    setWalletConnected(false);
+    setWalletAddress("");
+    setWalletType("");
+    setWalletProvider("");
+  };
+
   const appStyle={minHeight:"100vh",background:T.bg0,color:T.t1,fontFamily:FONT_BODY,maxWidth:430,margin:"0 auto",position:"relative"};
   const pageStyle={...appStyle,padding:"44px 20px 60px"};
   const hdrStyle={position:"sticky",top:0,zIndex:50,background:`${T.bg0}ee`,backdropFilter:"blur(20px)",borderBottom:`1px solid ${T.b2}`};
@@ -614,14 +626,7 @@ export default function SignalPulsePro(){
                     </button>
                   ))}
                 </div>
-                <Btn variant="danger" onClick={()=>{
-  const provider=localStorage.getItem("sp_wallet_provider");
-  if(provider) localStorage.removeItem("sp_wallet_addr_"+provider);
-  localStorage.removeItem("sp_wallet_addr");
-  localStorage.removeItem("sp_wallet_type");
-  localStorage.removeItem("sp_wallet_provider");
-  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
-}}>Disconnect & Remove Wallet</Btn>
+                <Btn variant="danger" onClick={disconnectWallet}>Disconnect & Remove Wallet</Btn>
               </Card>
               <ApiKeyCard
                 apiKey={cbApiKey} setApiKey={setCbApiKey}
@@ -1222,14 +1227,7 @@ export default function SignalPulsePro(){
       <Card style={{marginBottom:12,borderColor:"rgba(16,185,129,.2)"}}><p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>👤 Account</p><p style={{fontWeight:600,fontSize:16,margin:"0 0 4px",fontFamily:FONT_DISPLAY}}>{user?.name||"–"}</p><p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{user?.email}</p><p style={{fontSize:12,color:T.t3,margin:0}}>via {user?.provider} · {user?.subscribed?"Active":"Free"}</p></Card>
       <Card style={{marginBottom:12,borderColor:walletConnected?"rgba(99,102,241,.3)":T.b1,background:walletConnected?"rgba(99,102,241,.05)":T.bg2}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:walletConnected?10:0}}><p style={{fontSize:11,color:walletConnected?T.accent2:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Connected Wallet</p><span style={{fontSize:11,fontWeight:600,color:walletConnected?T.green2:T.t3}}>{walletConnected?"● Connected":"Not connected"}</span></div>
-        {walletConnected?(<><p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{walletType}</p><p style={{fontSize:11,color:T.t3,margin:"0 0 10px",fontFamily:FONT_NUM,wordBreak:"break-all"}}>{walletAddress}</p><div style={{display:"flex",gap:8}}><button onClick={()=>setScreen(S.CONNECT)} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600}}>Switch Wallet</button><button onClick={()=>{
-  const provider=localStorage.getItem("sp_wallet_provider");
-  if(provider) localStorage.removeItem("sp_wallet_addr_"+provider);
-  localStorage.removeItem("sp_wallet_addr");
-  localStorage.removeItem("sp_wallet_type");
-  localStorage.removeItem("sp_wallet_provider");
-  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
-}} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button></div></>)
+        {walletConnected?(<><p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{walletType}</p><p style={{fontSize:11,color:T.t3,margin:"0 0 10px",fontFamily:FONT_NUM,wordBreak:"break-all"}}>{walletAddress}</p><div style={{display:"flex",gap:8}}><button onClick={()=>setScreen(S.CONNECT)} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600}}>Switch Wallet</button><button onClick={disconnectWallet} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button></div></>)
         :(<div style={{marginTop:10}}><p style={{fontSize:12,color:T.t3,margin:"0 0 8px",lineHeight:1.5}}>Connect MetaMask, Coinbase Wallet, Trust, Phantom, Ledger or any wallet to see your real balances and trade directly.</p><Btn onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Any Wallet</Btn></div>)}
       </Card>
       <Card style={{marginBottom:12}}>
@@ -1244,11 +1242,8 @@ export default function SignalPulsePro(){
       <Btn variant="danger" onClick={()=>{
   clearSession();
   localStorage.removeItem("sp_last_email");
-  localStorage.removeItem("sp_wallet_addr");
-  localStorage.removeItem("sp_wallet_type");
-  localStorage.removeItem("sp_wallet_provider");
+  disconnectWallet();
   setUser(null);setIsOwner(false);
-  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
   setScreen(S.LANDING);
 }}>Sign Out</Btn>
     </div>
