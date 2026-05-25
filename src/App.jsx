@@ -250,41 +250,59 @@ function WalletTxModal({type,onClose,onSubmit,prices}){
 function ApiKeyCard({apiKey,setApiKey,apiSecret,setApiSecret,saved,onSave,onClear,error}){
   const [showSecret,setShowSecret]=useState(false);
   const [expanded,setExpanded]=useState(!saved);
+
+  // Validate: API key should NOT look like an email
+  const looksLikeEmail = apiKey.includes("@");
+  const showEmailWarning = looksLikeEmail && apiKey.length > 3;
+
   return(
     <div style={{background:saved?"rgba(16,185,129,.06)":"rgba(99,102,241,.06)",border:`1px solid ${saved?"rgba(16,185,129,.3)":"rgba(99,102,241,.3)"}`,borderRadius:12,padding:16,marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:expanded?14:0}}>
         <div>
           <p style={{fontSize:13,fontWeight:700,color:saved?T.green2:T.accent2,margin:0}}>{saved?"✓ Coinbase API Connected — Live Trading ON":"⚡ Connect Coinbase API for Live Trading"}</p>
-          <p style={{fontSize:11,color:T.t3,margin:"2px 0 0",lineHeight:1.4}}>{saved?"Your keys are stored in this browser session only":"Enter your keys to enable real buy/sell/transfer"}</p>
+          <p style={{fontSize:11,color:T.t3,margin:"2px 0 0",lineHeight:1.4}}>{saved?"Your keys are stored in this browser session only":"Enter your Coinbase API keys — NOT your email or password"}</p>
         </div>
         <button onClick={()=>setExpanded(p=>!p)} style={{background:"none",border:"none",color:T.t3,fontSize:18,cursor:"pointer",padding:"0 4px"}}>{expanded?"▲":"▼"}</button>
       </div>
       {expanded&&(
         <>
-          <div style={{background:"rgba(0,0,0,.25)",borderRadius:8,padding:"10px 12px",marginBottom:14,fontSize:11,color:T.t2,lineHeight:1.8}}>
-            <strong style={{color:T.accent2}}>How to get your Coinbase API keys:</strong><br/>
-            1. Go to <strong>coinbase.com</strong> → Settings → API<br/>
-            2. Click <strong>"New API Key"</strong><br/>
-            3. Enable <strong>View + Trade</strong> permissions<br/>
-            4. Copy your Key and Secret below
+          {/* Step-by-step instructions */}
+          <div style={{background:"rgba(99,102,241,.08)",border:"1px solid rgba(99,102,241,.2)",borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+            <p style={{fontSize:12,color:T.accent2,fontWeight:700,margin:"0 0 8px"}}>📋 How to get your Coinbase API Key & Secret:</p>
+            <p style={{fontSize:11,color:T.t2,margin:"0 0 4px",lineHeight:1.7}}>1. Open <strong style={{color:T.t1}}>coinbase.com</strong> in a new tab</p>
+            <p style={{fontSize:11,color:T.t2,margin:"0 0 4px",lineHeight:1.7}}>2. Click your profile → <strong style={{color:T.t1}}>Settings</strong> → <strong style={{color:T.t1}}>API</strong></p>
+            <p style={{fontSize:11,color:T.t2,margin:"0 0 4px",lineHeight:1.7}}>3. Click <strong style={{color:T.t1}}>"New API Key"</strong></p>
+            <p style={{fontSize:11,color:T.t2,margin:"0 0 4px",lineHeight:1.7}}>4. Check <strong style={{color:T.t1}}>View</strong> + <strong style={{color:T.t1}}>Trade</strong> permissions</p>
+            <p style={{fontSize:11,color:T.t2,margin:"0 0 8px",lineHeight:1.7}}>5. Copy the <strong style={{color:T.gold}}>API Key</strong> and <strong style={{color:T.gold}}>API Secret</strong> — paste below</p>
+            <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",borderRadius:6,padding:"8px 10px"}}>
+              <p style={{fontSize:11,color:T.red2,margin:0,lineHeight:1.5}}>⚠️ <strong>Do NOT enter your email or password here.</strong> These fields require the special API Key and Secret from your Coinbase API settings page only.</p>
+            </div>
           </div>
+
           <div style={{marginBottom:10}}>
-            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>API Key</p>
-            <input type="text" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="organizations/xxx/apiKeys/xxx"
-              style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
+            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:4}}>Coinbase API Key</p>
+            <p style={{fontSize:10,color:T.t3,marginBottom:6}}>Looks like: <span style={{fontFamily:"monospace",color:T.t2}}>organizations/abc123/apiKeys/xyz789</span></p>
+            <input type="text" value={apiKey} onChange={e=>setApiKey(e.target.value)}
+              placeholder="organizations/abc.../apiKeys/xyz..."
+              style={{width:"100%",background:T.bg0,border:`1px solid ${showEmailWarning?"rgba(239,68,68,.5)":T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
+            {showEmailWarning&&<p style={{fontSize:11,color:T.red,marginTop:4}}>⚠️ This looks like an email address. The API Key is a long code from coinbase.com → Settings → API, not your email.</p>}
           </div>
+
           <div style={{marginBottom:14,position:"relative"}}>
-            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>API Secret</p>
-            <input type={showSecret?"text":"password"} value={apiSecret} onChange={e=>setApiSecret(e.target.value)} placeholder="-----BEGIN EC PRIVATE KEY-----"
+            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:4}}>Coinbase API Secret</p>
+            <p style={{fontSize:10,color:T.t3,marginBottom:6}}>Looks like: <span style={{fontFamily:"monospace",color:T.t2}}>-----BEGIN EC PRIVATE KEY-----</span></p>
+            <input type={showSecret?"text":"password"} value={apiSecret} onChange={e=>setApiSecret(e.target.value)}
+              placeholder="-----BEGIN EC PRIVATE KEY-----"
               style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 40px 10px 12px",color:T.t1,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
-            <button onClick={()=>setShowSecret(p=>!p)} style={{position:"absolute",right:10,top:"calc(50% + 10px)",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,cursor:"pointer",fontSize:14}}>{showSecret?"🙈":"👁️"}</button>
+            <button onClick={()=>setShowSecret(p=>!p)} style={{position:"absolute",right:10,top:"calc(50% + 14px)",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,cursor:"pointer",fontSize:14}}>{showSecret?"🙈":"👁️"}</button>
           </div>
+
           {error&&<p style={{fontSize:12,color:T.red,marginBottom:10}}>⚠️ {error}</p>}
           <div style={{display:"flex",gap:8}}>
-            <button onClick={onSave} style={{flex:2,padding:"11px",background:"linear-gradient(135deg,#059669,#10B981)",border:"none",borderRadius:T.r3,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY}}>{saved?"Update Keys":"Save & Enable Live Trading"}</button>
-            {saved&&<button onClick={onClear} style={{flex:1,padding:"11px",background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:T.r3,color:T.red,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>Clear</button>}
+            <button onClick={onSave} style={{flex:2,padding:"12px",background:"linear-gradient(135deg,#059669,#10B981)",border:"none",borderRadius:T.r3,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY}}>{saved?"Update Keys":"Save & Enable Live Trading"}</button>
+            {saved&&<button onClick={onClear} style={{flex:1,padding:"12px",background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:T.r3,color:T.red,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>Clear Keys</button>}
           </div>
-          <p style={{fontSize:10,color:T.t3,marginTop:10,lineHeight:1.6}}>🔐 Keys are stored only in your browser session memory and cleared when you close the browser. They are only sent to execute your own trades — never stored on our servers.</p>
+          <p style={{fontSize:10,color:T.t3,marginTop:10,lineHeight:1.6}}>🔐 Keys are stored only in your browser session and cleared when you close the browser. Never stored on our servers.</p>
         </>
       )}
     </div>
