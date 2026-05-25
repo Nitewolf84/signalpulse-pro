@@ -619,7 +619,7 @@ export default function SignalPulsePro(){
             <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Connect Wallet</h2>
             <p style={{fontSize:12,color:T.t2,margin:0}}>Any wallet · Private to you · Secure</p>
           </div>
-          {walletConnected&&<Pill label="Connected"/>}
+          {walletConnected&&<span style={{fontSize:11,fontWeight:700,color:T.green2,background:"rgba(16,185,129,.12)",padding:"4px 10px",borderRadius:20,border:"1px solid rgba(16,185,129,.3)",whiteSpace:"nowrap"}}>✓ {walletType.split(" ")[0]}</span>}
         </div>
         <div style={{padding:16}}>
           {walletConnected?(
@@ -660,17 +660,54 @@ export default function SignalPulsePro(){
             <div>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Choose your wallet</p>
               {WALLET_TYPES.map(w=>(
-                <div key={w.id} onClick={()=>{
-                  if(w.id==="manual"){setWalletType("Manual Address");setWalletManualInput("");}
-                  else{
-                    const storedAddr=localStorage.getItem("sp_wallet_addr_"+w.id);
-                    const addr=storedAddr||("0x"+Math.random().toString(16).slice(2,12)+"..."+Math.random().toString(16).slice(2,6));
-                    localStorage.setItem("sp_wallet_addr",addr);
-                    localStorage.setItem("sp_wallet_type",w.name);
-                    localStorage.setItem("sp_wallet_provider",w.id);
-                    localStorage.setItem("sp_wallet_addr_"+w.id,addr);
-                    setWalletType(w.name);setWalletAddress(addr);setWalletProvider(w.id);setWalletConnected(true);
-                  }}}
+                <div key={w.id} onClick={async()=>{
+                  if(w.id==="manual"){setWalletType("Manual Address");setWalletManualInput("");return;}
+
+                  // ── METAMASK / COINBASE WALLET / TRUST (window.ethereum) ──
+                  if(w.id==="metamask"||w.id==="coinbase"||w.id==="trust"){
+                    if(!window.ethereum){
+                      alert(`${w.name} is not installed. Install the ${w.name} browser extension or app, then try again.`);
+                      return;
+                    }
+                    try{
+                      const accounts = await window.ethereum.request({method:"eth_requestAccounts"});
+                      if(!accounts||accounts.length===0){alert("No accounts found. Make sure your wallet is unlocked.");return;}
+                      const addr = accounts[0];
+                      localStorage.setItem("sp_wallet_addr",addr);
+                      localStorage.setItem("sp_wallet_type",w.name);
+                      localStorage.setItem("sp_wallet_provider",w.id);
+                      localStorage.setItem("sp_wallet_addr_"+w.id,addr);
+                      setWalletType(w.name);setWalletAddress(addr);setWalletProvider(w.id);setWalletConnected(true);
+                    }catch(err){
+                      if(err.code===4001){alert("Connection rejected. Please approve the connection request in your wallet.");}
+                      else{alert("Could not connect to "+w.name+". Error: "+err.message);}
+                    }
+                    return;
+                  }
+
+                  // ── PHANTOM (Solana) ──
+                  if(w.id==="phantom"){
+                    const phantom=window.phantom?.solana||window.solana;
+                    if(!phantom||!phantom.isPhantom){alert("Phantom wallet not found. Install the Phantom app or extension first.");return;}
+                    try{
+                      const resp=await phantom.connect();
+                      const addr=resp.publicKey.toString();
+                      localStorage.setItem("sp_wallet_addr",addr);
+                      localStorage.setItem("sp_wallet_type","Phantom");
+                      localStorage.setItem("sp_wallet_provider","phantom");
+                      localStorage.setItem("sp_wallet_addr_phantom",addr);
+                      setWalletType("Phantom");setWalletAddress(addr);setWalletProvider("phantom");setWalletConnected(true);
+                    }catch(err){alert("Phantom connection failed: "+err.message);}
+                    return;
+                  }
+
+                  // ── LEDGER / WALLETCONNECT — prompt manual address ──
+                  if(w.id==="ledger"||w.id==="walletconnect"){
+                    setWalletType(w.name);setWalletManualInput("");
+                    alert(`To connect ${w.name}: paste your wallet address manually in the field below. Ledger and WalletConnect require a desktop dApp browser for full signing support.`);
+                    return;
+                  }
+                }}
                   style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",marginBottom:8,background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,cursor:"pointer",transition:"all .2s"}}>
                   <span style={{fontSize:26,flexShrink:0}}>{w.icon}</span>
                   <div style={{flex:1}}>
@@ -680,7 +717,7 @@ export default function SignalPulsePro(){
                   <span style={{fontSize:18,color:T.t3}}>›</span>
                 </div>
               ))}
-              {walletType==="Manual Address"&&(
+              {(walletType==="Manual Address"||walletType==="Ledger"||walletType==="WalletConnect")&&(
                 <Card style={{marginTop:8,marginBottom:8}}>
                   <p style={{fontSize:12,color:T.t2,fontWeight:600,marginBottom:10}}>Paste your wallet address</p>
                   <div style={{display:"flex",gap:8}}>
@@ -1376,7 +1413,7 @@ export default function SignalPulsePro(){
             :(<>
               <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(99,102,241,.1),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",padding:20}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                  <div><p style={{fontSize:11,color:T.accent2,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{walletType} · Connected</p><p style={{fontSize:10,color:T.t3,fontFamily:FONT_NUM,margin:"0 0 8px",wordBreak:"break-all",maxWidth:200}}>{walletAddress}</p><p style={{fontSize:34,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.03em"}}>{usd(portfolioUSD)}</p><p style={{fontSize:13,color:portfolioPnL>=0?T.green2:T.red,fontWeight:600,margin:0}}>{portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} unrealized PnL</p></div>
+                  <div><p style={{fontSize:11,color:T.accent2,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{walletType} · Connected</p><p style={{fontSize:10,color:T.t3,fontFamily:FONT_NUM,margin:"0 0 8px",wordBreak:"break-all",maxWidth:220}}>{walletAddress}</p><p style={{fontSize:34,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.03em"}}>{usd(portfolioUSD)}</p><p style={{fontSize:13,color:portfolioPnL>=0?T.green2:T.red,fontWeight:600,margin:0}}>{portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} unrealized PnL</p></div>
                   <button onClick={()=>setScreen(S.CONNECT)} style={{padding:"8px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600,flexShrink:0}}>Switch</button>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
