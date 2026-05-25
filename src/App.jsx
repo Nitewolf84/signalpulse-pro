@@ -615,6 +615,8 @@ export default function SignalPulsePro(){
                   ))}
                 </div>
                 <Btn variant="danger" onClick={()=>{
+  const provider=localStorage.getItem("sp_wallet_provider");
+  if(provider) localStorage.removeItem("sp_wallet_addr_"+provider);
   localStorage.removeItem("sp_wallet_addr");
   localStorage.removeItem("sp_wallet_type");
   localStorage.removeItem("sp_wallet_provider");
@@ -1220,7 +1222,14 @@ export default function SignalPulsePro(){
       <Card style={{marginBottom:12,borderColor:"rgba(16,185,129,.2)"}}><p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>👤 Account</p><p style={{fontWeight:600,fontSize:16,margin:"0 0 4px",fontFamily:FONT_DISPLAY}}>{user?.name||"–"}</p><p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{user?.email}</p><p style={{fontSize:12,color:T.t3,margin:0}}>via {user?.provider} · {user?.subscribed?"Active":"Free"}</p></Card>
       <Card style={{marginBottom:12,borderColor:walletConnected?"rgba(99,102,241,.3)":T.b1,background:walletConnected?"rgba(99,102,241,.05)":T.bg2}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:walletConnected?10:0}}><p style={{fontSize:11,color:walletConnected?T.accent2:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Connected Wallet</p><span style={{fontSize:11,fontWeight:600,color:walletConnected?T.green2:T.t3}}>{walletConnected?"● Connected":"Not connected"}</span></div>
-        {walletConnected?(<><p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{walletType}</p><p style={{fontSize:11,color:T.t3,margin:"0 0 10px",fontFamily:FONT_NUM,wordBreak:"break-all"}}>{walletAddress}</p><div style={{display:"flex",gap:8}}><button onClick={()=>setScreen(S.CONNECT)} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600}}>Switch Wallet</button><button onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button></div></>)
+        {walletConnected?(<><p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{walletType}</p><p style={{fontSize:11,color:T.t3,margin:"0 0 10px",fontFamily:FONT_NUM,wordBreak:"break-all"}}>{walletAddress}</p><div style={{display:"flex",gap:8}}><button onClick={()=>setScreen(S.CONNECT)} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:12,fontWeight:600}}>Switch Wallet</button><button onClick={()=>{
+  const provider=localStorage.getItem("sp_wallet_provider");
+  if(provider) localStorage.removeItem("sp_wallet_addr_"+provider);
+  localStorage.removeItem("sp_wallet_addr");
+  localStorage.removeItem("sp_wallet_type");
+  localStorage.removeItem("sp_wallet_provider");
+  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
+}} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button></div></>)
         :(<div style={{marginTop:10}}><p style={{fontSize:12,color:T.t3,margin:"0 0 8px",lineHeight:1.5}}>Connect MetaMask, Coinbase Wallet, Trust, Phantom, Ledger or any wallet to see your real balances and trade directly.</p><Btn onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Any Wallet</Btn></div>)}
       </Card>
       <Card style={{marginBottom:12}}>
