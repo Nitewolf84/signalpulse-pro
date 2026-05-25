@@ -526,15 +526,14 @@ export default function SignalPulsePro(){
   };
 
   const disconnectWallet=()=>{
-    const provider=localStorage.getItem("sp_wallet_provider")||walletProvider;
-    if(provider){
-      localStorage.removeItem("sp_wallet_addr_"+provider);
-    }
-    ["sp_wallet_addr","sp_wallet_type","sp_wallet_provider"].forEach(k=>localStorage.removeItem(k));
+    // Wipe every wallet key from localStorage — no memory left
+    const allKeys=Object.keys(localStorage);
+    allKeys.forEach(k=>{ if(k.startsWith("sp_wallet")) localStorage.removeItem(k); });
     setWalletConnected(false);
     setWalletAddress("");
     setWalletType("");
     setWalletProvider("");
+    setWalletManualInput("");
   };
 
   const appStyle={minHeight:"100vh",background:T.bg0,color:T.t1,fontFamily:FONT_BODY,maxWidth:430,margin:"0 auto",position:"relative"};
