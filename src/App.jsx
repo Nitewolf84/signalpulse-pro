@@ -439,6 +439,7 @@ export default function SignalPulsePro() {
   const [walletAddress,setWalletAddress]     = useState("");
   const [walletType,setWalletType]           = useState("");
   const [walletConnected,setWalletConnected] = useState(false);
+  const [walletTx,setWalletTx]               = useState(null); // BUY | SELL | TRANSFER
   const [phoneNumber,setPhoneNumber]         = useState("");
   const [smsEnabled,setSmsEnabled]           = useState(false);
 
@@ -1240,13 +1241,62 @@ export default function SignalPulsePro() {
         </div>
         <div style={{padding:16}}>
           {walletConnected?(
-            <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.1),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:24}}>
+           <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.1),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:24}}>
               <p style={{fontSize:28,margin:"0 0 8px"}}>✅</p>
               <p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>Wallet Connected</p>
               <p style={{fontSize:12,color:T.t2,margin:"0 0 4px"}}>Type: {walletType}</p>
               <p style={{fontSize:11,color:T.t3,fontFamily:FONT_NUM,margin:"0 0 16px",wordBreak:"break-all"}}>{walletAddress}</p>
+              {/* ── BUY / SELL / TRANSFER ── */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+                {[
+                  {label:"↓ BUY",  tx:"BUY",      c:"#34D399", bg:"rgba(16,185,129,.12)", b:"rgba(16,185,129,.3)"},
+                  {label:"↑ SELL", tx:"SELL",     c:"#FCD34D", bg:"rgba(245,158,11,.1)",  b:"rgba(245,158,11,.3)"},
+                  {label:"→ SEND", tx:"TRANSFER", c:"#818CF8", bg:"rgba(99,102,241,.12)", b:"rgba(99,102,241,.3)"},
+                ].map(btn=>(
+                  <button key={btn.tx} onClick={()=>setWalletTx(btn.tx)}
+                    style={{padding:"11px 4px",background:btn.bg,border:`1px solid ${btn.b}`,borderRadius:8,
+                      color:btn.c,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
               <Btn variant="danger" onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}} style={{maxWidth:200,margin:"0 auto"}}>Disconnect</Btn>
             </Card>
+
+            {/* ── TRANSACTION MODAL ── */}
+            {walletTx&&(
+              <div onClick={e=>e.target===e.currentTarget&&setWalletTx(null)}
+                style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,backdropFilter:"blur(4px)"}}>
+                <div style={{width:"100%",maxWidth:430,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:"20px 20px 0 0",padding:24,paddingBottom:44}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <p style={{fontSize:18,fontWeight:800,color:T.t1,margin:0}}>{walletTx} CRYPTO</p>
+                    <button onClick={()=>setWalletTx(null)} style={{background:"none",border:"none",color:T.t3,fontSize:24,cursor:"pointer"}}>×</button>
+                  </div>
+                  <p style={{fontSize:12,color:T.t3,marginBottom:20}}>
+                    {walletTx==="BUY"&&"Purchase crypto with your connected wallet"}
+                    {walletTx==="SELL"&&"Sell crypto from your wallet balance"}
+                    {walletTx==="TRANSFER"&&"Send crypto to another wallet address"}
+                  </p>
+                  <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Token</p>
+                  <select style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",color:T.t1,fontSize:14,marginBottom:16,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}>
+                    {COINS.slice(0,8).map(c=><option key={c.symbol} value={c.symbol}>{c.symbol} — {c.name}</option>)}
+                  </select>
+                  <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Amount</p>
+                  <input type="number" placeholder="0.00"
+                    style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",color:T.t1,fontSize:18,marginBottom:16,outline:"none",boxSizing:"border-box",fontFamily:"inherit",fontWeight:700}}/>
+                  {walletTx==="TRANSFER"&&(<>
+                    <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Recipient Address</p>
+                    <input type="text" placeholder="0x..."
+                      style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",color:T.t1,fontSize:13,marginBottom:16,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
+                  </>)}
+                  <button onClick={()=>{ alert(`${walletTx} submitted! (Connect Coinbase API keys in Vercel to go live)`); setWalletTx(null); }}
+                    style={{width:"100%",padding:"14px",background:walletTx==="BUY"?"linear-gradient(135deg,#059669,#10B981)":walletTx==="SELL"?"linear-gradient(135deg,#D97706,#F59E0B)":"linear-gradient(135deg,#4F46E5,#818CF8)",border:"none",borderRadius:T.r3,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",marginBottom:10}}>
+                    ✓ CONFIRM {walletTx}
+                  </button>
+                  <button onClick={()=>setWalletTx(null)} style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.b1}`,borderRadius:T.r3,color:T.t3,fontSize:13,cursor:"pointer"}}>CANCEL</button>
+                </div>
+              </div>
+            )}
           ):(
             <>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Choose your wallet</p>
