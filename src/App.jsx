@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 const OWNER_KEY = "OWNER-SIGNALPULSE-FREE";
 
@@ -30,8 +30,11 @@ const CB_LIVE = false;
 const S = {
   SPLASH:"splash", LANDING:"landing", LOGIN:"login", SIGNUP:"signup",
   PAYWALL:"paywall", MAIN:"main", PIVOT:"pivot", DEEP:"deep",
-  SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect", TRADE:"trade"
+  SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect", TRADE:"trade", HELP:"help"
 };
+const SUPPORT_EMAIL = "support@signalpulsepro.com";
+const PAYPAL_CLIENT_ID = "AdVv-0ZR2G304r2BujEU2m_UZQsPrh7NTEiuWcNTlDvRsAUdQpeoVzBZXIj59hMn6xMrdcAdgmKhiFBk";
+const PAYPAL_PLAN_ID   = "P-4H459901CX116533FNIKEHRY";
 
 const FONT_DISPLAY = "'Clash Display', 'Sora', 'Plus Jakarta Sans', sans-serif";
 const FONT_BODY    = "'Plus Jakarta Sans', 'Outfit', 'Inter', sans-serif";
@@ -62,7 +65,13 @@ const clamp= (v,a,b) => Math.max(a,Math.min(b,v));
 
 const MOCK_KEY = "sp_users_v2";
 const SESSION_KEY = "sp_session_v1";
-function saveSession(user) { localStorage.setItem(SESSION_KEY, JSON.stringify({ subscribed: user.subscribed, trial: user.trial||false, trialStart: user.trialStart||null })); }
+function saveSession(user) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({
+    id:user.id, email:user.email, name:user.name, provider:user.provider||"email",
+    subscribed:user.subscribed, trial:user.trial||false, trialStart:user.trialStart||null,
+    createdAt:user.createdAt||new Date().toISOString()
+  }));
+}
 function loadSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY)||"null"); } catch(_){ return null; } }
 function clearSession() { localStorage.removeItem(SESSION_KEY); }
 function getTrialDaysLeft(trialStart) { if(!trialStart) return 0; return Math.max(0, Math.ceil(30-(Date.now()-trialStart)/(1000*60*60*24))); }
@@ -82,7 +91,11 @@ function updateUserSub(userId,val) {
 }
 
 async function fetchCGPrices() { const ids=COINS.map(c=>c.cgId).join(","); const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`); if(!r.ok) throw new Error("CG"); return r.json(); }
-async function fetchCGMarketData(cgIds) { const ids=cgIds.join(","); const r=await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=50&page=1&sparkline=false&price_change_percentage=1h,24h,7d,30d`); if(!r.ok) throw new Error("CG markets"); return r.json(); }
+async function fetchCGMarketData() {
+  const r=await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h");
+  if(!r.ok) throw new Error("CG markets");
+  return r.json();
+}
 const CHART_DAYS = {"1H":1,"24H":1,"7D":7,"30D":30,"6M":180,"1Y":365,"3Y":1095,"5Y":1825};
 async function fetchCGChart(cgId,timeframe) { const days=CHART_DAYS[timeframe]||1; const r=await fetch(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=${days}`); if(!r.ok) throw new Error("CG chart"); const d=await r.json(); return d.prices||[]; }
 
@@ -130,6 +143,55 @@ function FormInput({label,type="text",value,onChange,placeholder,error,autoCompl
 function SocialBtn({icon,label,onClick}){return <button onClick={onClick} style={{width:"100%",padding:"13px",borderRadius:T.r3,border:`1px solid ${T.b1}`,background:T.bg2,color:T.t1,fontSize:14,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,fontFamily:FONT_BODY,transition:"all .2s",marginBottom:8}}><span style={{fontSize:18}}>{icon}</span>{label}</button>;}
 function Divider({label}){return <div style={{display:"flex",alignItems:"center",gap:12,margin:"20px 0"}}><div style={{flex:1,height:1,background:T.b1}}/><span style={{fontSize:12,color:T.t3,fontFamily:FONT_BODY,fontWeight:500}}>{label}</span><div style={{flex:1,height:1,background:T.b1}}/></div>;}
 function Btn({children,onClick,variant="primary",disabled,style={}}){const variants={primary:{background:`linear-gradient(135deg,#6366F1,#818CF8)`,color:"#fff",border:"none"},secondary:{background:T.bg2,color:T.t1,border:`1px solid ${T.b1}`},danger:{background:"rgba(239,68,68,.1)",color:T.red,border:"1px solid rgba(239,68,68,.2)"},paypal:{background:"linear-gradient(135deg,#009CDE,#003087)",color:"#fff",border:"none"},ghost:{background:"transparent",color:T.t2,border:"none"},success:{background:`linear-gradient(135deg,#059669,#10B981)`,color:"#fff",border:"none"},uphold:{background:"linear-gradient(135deg,#1EB8B8,#0A8080)",color:"#fff",border:"none"}};const v=variants[variant]||variants.primary;return <button onClick={onClick} disabled={disabled} style={{width:"100%",padding:"14px",borderRadius:T.r3,...v,fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",fontFamily:FONT_BODY,letterSpacing:".02em",transition:"all .2s",opacity:disabled?.6:1,...style}}>{children}</button>;}
+
+function PayPalButton({onSuccess}){
+  const containerRef = React.useRef(null);
+  const rendered = React.useRef(false);
+
+  useEffect(()=>{
+    if(rendered.current) return;
+    // Load PayPal SDK dynamically
+    const existingScript = document.getElementById("paypal-sdk");
+    const initButton = () => {
+      if(!window.paypal||!containerRef.current) return;
+      if(rendered.current) return;
+      rendered.current = true;
+      try {
+        window.paypal.Buttons({
+          style:{shape:"rect",color:"gold",layout:"vertical",label:"subscribe"},
+          createSubscription:(data,actions)=>actions.subscription.create({plan_id:PAYPAL_PLAN_ID}),
+          onApprove:(data)=>{
+            onSuccess(data.subscriptionID);
+          },
+          onError:(err)=>{
+            console.error("PayPal error",err);
+          }
+        }).render(containerRef.current);
+      } catch(e){ console.error("PayPal render error",e); }
+    };
+    if(existingScript){
+      if(window.paypal) initButton();
+      else existingScript.addEventListener("load", initButton);
+    } else {
+      const script = document.createElement("script");
+      script.id = "paypal-sdk";
+      script.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription`;
+      script.setAttribute("data-sdk-integration-source","button-factory");
+      script.onload = initButton;
+      document.head.appendChild(script);
+    }
+    return ()=>{};
+  },[]);
+
+  return(
+    <div>
+      <div ref={containerRef} style={{minHeight:50}}/>
+      <p style={{fontSize:11,color:"#475569",textAlign:"center",marginTop:8}}>
+        Secured by PayPal · Cancel anytime · 256-bit SSL
+      </p>
+    </div>
+  );
+}
 
 function WalletTxModal({type,onClose,onSubmit,prices}){
   const [amount,setAmount]=useState("");
@@ -282,10 +344,12 @@ export default function SignalPulsePro(){
   const [pushEnabled,setPushEnabled]=useState(false);
   const [trialDaysLeft,setTrialDaysLeft]=useState(30);
   const [searchQuery,setSearchQuery]=useState("");
-  const [walletAddress,setWalletAddress]=useState("");
-  const [walletType,setWalletType]=useState("");
-  const [walletConnected,setWalletConnected]=useState(false);
+  const [walletAddress,setWalletAddress]=useState(()=>localStorage.getItem("sp_wallet_addr")||"");
+  const [walletType,setWalletType]=useState(()=>localStorage.getItem("sp_wallet_type")||"");
+  const [walletProvider,setWalletProvider]=useState(()=>localStorage.getItem("sp_wallet_provider")||"");
+  const [walletConnected,setWalletConnected]=useState(()=>!!(localStorage.getItem("sp_wallet_addr")));
   const [walletTx,setWalletTx]=useState(null);
+  const [walletManualInput,setWalletManualInput]=useState("");
   const [cbApiKey,setCbApiKey]=useState(()=>sessionStorage.getItem("sp_cb_key")||"");
   const [cbApiSecret,setCbApiSecret]=useState(()=>sessionStorage.getItem("sp_cb_secret")||"");
   const [cbKeysSaved,setCbKeysSaved]=useState(()=>!!(sessionStorage.getItem("sp_cb_key")));
@@ -293,6 +357,9 @@ export default function SignalPulsePro(){
   const [phoneNumber,setPhoneNumber]=useState("");
   const [smsEnabled,setSmsEnabled]=useState(false);
   const [adminTab,setAdminTab]=useState("overview");
+  const [showOwnerBox,setShowOwnerBox]=useState(false);
+  const [logoTaps,setLogoTaps]=useState(0);
+  const [logoTapTimer,setLogoTapTimer]=useState(null);
 
   useEffect(()=>{
   // Track page visit
@@ -305,11 +372,11 @@ export default function SignalPulsePro(){
   // Auto-restore session
   const lastEmail=localStorage.getItem("sp_last_email");
   const sess=loadSession();
-  if(lastEmail && sess?.subscribed !== undefined){
+  if(sess && sess.email){
     const users=getUsers();
-    const u=users.find(x=>x.email===lastEmail);
-    if(u){
-      const merged={...u, subscribed:sess.subscribed, trial:sess.trial||false, trialStart:sess.trialStart||null};
+    const storedUser=users.find(x=>x.email===sess.email);
+    const merged={...(storedUser||{}), ...sess};
+    if(merged.email){
       setUser(merged);
       if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
       setTimeout(()=>setScreen(merged.subscribed?S.MAIN:S.PAYWALL),2000);
@@ -346,7 +413,7 @@ export default function SignalPulsePro(){
   },[]);
 
   useEffect(()=>{if(screen===S.MAIN){fetchMarket();priceRef.current=setInterval(fetchMarket,45000);return()=>clearInterval(priceRef.current);}},[screen,fetchMarket]);
-  const loadMarketData=useCallback(async()=>{setMarketLoading(true);try{const data=await fetchCGMarketData(COINS.map(c=>c.cgId));setMarketData(data);}catch(_){}setMarketLoading(false);},[]);
+  const loadMarketData=useCallback(async()=>{setMarketLoading(true);try{const data=await fetchCGMarketData();setMarketData(data);}catch(_){}setMarketLoading(false);},[]);
   useEffect(()=>{if(tab==="market")loadMarketData();},[tab,loadMarketData]);
   useEffect(()=>{if(!chartCoin)return;setChartLoading(true);setChartData([]);fetchCGChart(chartCoin.cgId,chartFrame).then(d=>setChartData(d)).catch(()=>setChartData([])).finally(()=>setChartLoading(false));},[chartCoin,chartFrame]);
   const toggleFavorite=(symbol)=>{setFavorites(prev=>{const n=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];localStorage.setItem("sp_favorites",JSON.stringify(n));return n;});};
@@ -465,7 +532,13 @@ export default function SignalPulsePro(){
 
   if(screen===S.SPLASH)return(<div style={{...appStyle,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><style>{GOOGLE_FONTS}</style><div style={{background:`radial-gradient(ellipse at 30% 30%,rgba(99,102,241,.15) 0%,transparent 60%),radial-gradient(ellipse at 70% 70%,rgba(16,185,129,.08) 0%,transparent 60%)`,position:"fixed",inset:0,pointerEvents:"none"}}/><div style={{textAlign:"center",zIndex:1,animation:"fadeUp .7s ease"}}><div style={{width:64,height:64,borderRadius:20,background:"linear-gradient(135deg,#6366F1,#818CF8)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 0 40px rgba(99,102,241,.4)"}}><span style={{fontSize:28}}>◈</span></div><div style={{fontSize:36,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,lineHeight:1.1}}>SignalPulse</div><div style={{fontSize:13,color:T.t2,marginTop:8,fontWeight:500}}>AI Crypto Day Trading</div><div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:32}}><LiveDot/><span style={{fontSize:12,color:T.t3,fontWeight:500}}>Connecting to markets...</span></div></div></div>);
 
-  if(screen===S.LANDING)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{background:`radial-gradient(ellipse at 20% 0%,rgba(99,102,241,.12) 0%,transparent 50%)`,position:"fixed",inset:0,pointerEvents:"none"}}/><div style={{position:"relative",zIndex:1}}><div style={{marginBottom:36,textAlign:"center"}}><div style={{width:52,height:52,borderRadius:16,background:"linear-gradient(135deg,#6366F1,#818CF8)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",boxShadow:"0 8px 24px rgba(99,102,241,.35)"}}><span style={{fontSize:22}}>◈</span></div><h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,margin:"0 0 8px",lineHeight:1.2}}>SignalPulse Pro</h1><p style={{fontSize:14,color:T.t2,margin:"0 0 20px",fontWeight:400,lineHeight:1.6}}>AI-powered signals that tell you exactly<br/>when to buy, hold, or pivot.</p><div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>{["Real-time AI","Pivot Advisor","Live Prices","Tax Reports"].map(f=>(<span key={f} style={{fontSize:11,color:T.accent2,background:"rgba(99,102,241,.1)",padding:"4px 10px",borderRadius:20,border:`1px solid rgba(99,102,241,.2)`,fontWeight:600}}>{f}</span>))}</div></div><Btn onClick={()=>{setAuthErr("");setScreen(S.SIGNUP);}}>Create Free Account</Btn><div style={{height:8}}/><Btn variant="secondary" onClick={()=>{setAuthErr("");setScreen(S.LOGIN);}}>Sign In</Btn><div style={{marginTop:24,padding:16,background:"rgba(245,158,11,.06)",border:`1px solid rgba(245,158,11,.15)`,borderRadius:T.r1}}><p style={{fontSize:12,color:T.gold,fontWeight:600,marginBottom:10}}>👑 Owner Access</p><div style={{display:"flex",gap:8}}><input value={ownerInput} onChange={e=>setOwnerInput(e.target.value)} placeholder="Enter owner key..." style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 14px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/><button onClick={doOwnerKey} style={{padding:"10px 16px",borderRadius:T.r3,border:`1px solid rgba(245,158,11,.3)`,background:"rgba(245,158,11,.15)",color:T.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,whiteSpace:"nowrap"}}>Unlock</button></div>{authErr&&<p style={{fontSize:12,color:T.red,marginTop:6}}>{authErr}</p>}<button style={{background:"none",border:"none",color:T.t3,fontSize:11,cursor:"pointer",marginTop:6,fontFamily:FONT_BODY}} onClick={()=>setOwnerInput(OWNER_KEY)}>Fill demo key</button></div><p style={{textAlign:"center",marginTop:20,fontSize:12,color:T.t3,lineHeight:1.7}}>1 month free · Then $19.99/mo · Cancel anytime</p></div></div>);
+  if(screen===S.LANDING)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{background:`radial-gradient(ellipse at 20% 0%,rgba(99,102,241,.12) 0%,transparent 50%)`,position:"fixed",inset:0,pointerEvents:"none"}}/><div style={{position:"relative",zIndex:1}}><div style={{marginBottom:36,textAlign:"center"}}><div onClick={()=>{
+  const newCount=logoTaps+1;
+  setLogoTaps(newCount);
+  if(logoTapTimer)clearTimeout(logoTapTimer);
+  if(newCount>=5){setShowOwnerBox(true);setLogoTaps(0);}
+  else{const t=setTimeout(()=>setLogoTaps(0),2000);setLogoTapTimer(t);}
+}} style={{width:52,height:52,borderRadius:16,background:"linear-gradient(135deg,#6366F1,#818CF8)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",boxShadow:"0 8px 24px rgba(99,102,241,.35)",cursor:"default",userSelect:"none"}}><span style={{fontSize:22}}>◈</span></div><h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,margin:"0 0 8px",lineHeight:1.2}}>SignalPulse Pro</h1><p style={{fontSize:14,color:T.t2,margin:"0 0 20px",fontWeight:400,lineHeight:1.6}}>AI-powered signals that tell you exactly<br/>when to buy, hold, or pivot.</p><div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>{["Real-time AI","Pivot Advisor","Live Prices","Tax Reports"].map(f=>(<span key={f} style={{fontSize:11,color:T.accent2,background:"rgba(99,102,241,.1)",padding:"4px 10px",borderRadius:20,border:`1px solid rgba(99,102,241,.2)`,fontWeight:600}}>{f}</span>))}</div></div><Btn onClick={()=>{setAuthErr("");setScreen(S.SIGNUP);}}>Create Free Account</Btn><div style={{height:8}}/><Btn variant="secondary" onClick={()=>{setAuthErr("");setScreen(S.LOGIN);}}>Sign In</Btn>{showOwnerBox&&(<div style={{marginTop:24,padding:16,background:"rgba(245,158,11,.06)",border:`1px solid rgba(245,158,11,.15)`,borderRadius:T.r1,animation:"fadeIn .4s ease"}}><p style={{fontSize:12,color:T.gold,fontWeight:600,marginBottom:10}}>👑 Owner Access</p><div style={{display:"flex",gap:8}}><input value={ownerInput} onChange={e=>setOwnerInput(e.target.value)} placeholder="Enter owner key..." autoFocus style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 14px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/><button onClick={doOwnerKey} style={{padding:"10px 16px",borderRadius:T.r3,border:`1px solid rgba(245,158,11,.3)`,background:"rgba(245,158,11,.15)",color:T.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,whiteSpace:"nowrap"}}>Unlock</button></div>{authErr&&<p style={{fontSize:12,color:T.red,marginTop:6}}>{authErr}</p>}</div>)}<p style={{textAlign:"center",marginTop:20,fontSize:12,color:T.t3,lineHeight:1.7}}>1 month free · Then $19.99/mo · Cancel anytime</p></div></div>);
 
   if(screen===S.SIGNUP)return(<div style={pageStyle}><style>{GOOGLE_FONTS}</style><div style={{position:"relative",zIndex:1}}><div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}><button style={backBtnStyle} onClick={()=>setScreen(S.LANDING)}>←</button><div><h2 style={{fontSize:20,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em"}}>Create Account</h2><p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Start trading smarter today</p></div></div><SocialBtn icon="G" label="Continue with Google" onClick={doGoogle}/><SocialBtn icon="🍎" label="Continue with Apple" onClick={()=>setAuthErr("Apple Sign In requires deployment.")}/><Divider label="or sign up with email"/><FormInput label="Full name" value={authName} onChange={setAuthName} placeholder="Your name" autoComplete="name"/><FormInput label="Email address" type="email" value={authEmail} onChange={setAuthEmail} placeholder="you@email.com" autoComplete="email"/><FormInput label="Password" type="password" value={authPass} onChange={setAuthPass} placeholder="Min 6 characters" autoComplete="new-password"/>{authErr&&<Card style={{marginBottom:14,borderColor:"rgba(239,68,68,.2)",background:"rgba(239,68,68,.06)",padding:12}}><p style={{fontSize:13,color:T.red,margin:0}}>{authErr}</p></Card>}<Btn onClick={doSignUp} disabled={authBusy}>{authBusy?"Creating account...":"Create Account →"}</Btn><p style={{textAlign:"center",marginTop:14,fontSize:13,color:T.t2}}>Already have an account?{" "}<button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{setAuthErr("");setScreen(S.LOGIN);}}>Sign in</button></p></div></div>);
 
@@ -482,16 +555,20 @@ export default function SignalPulsePro(){
   setTrialDaysLeft(30);
   setUser(updated);
   setScreen(S.MAIN);
-}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}><p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p><Btn variant="paypal" onClick={()=>{
-  const updated={...user,subscribed:true,trial:false,trialStart:null};
-  const users=getUsers();
-  const idx=users.findIndex(x=>x.id===user?.id);
-  if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false};saveUsers(users);}
-  saveSession(updated);
-  localStorage.setItem("sp_last_email",updated.email||"");
-  setUser(updated);
-  setScreen(S.MAIN);
-}}>🅿 Subscribe with PayPal — $19.99/mo</Btn><p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p></Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
+}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)",padding:20}}>
+          <p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>Subscribe with PayPal</p>
+          <p style={{fontSize:12,color:"#94A3B8",marginBottom:16,lineHeight:1.5}}>$19.99/month · Cancel anytime · Instant access</p>
+          <PayPalButton onSuccess={(subscriptionId)=>{
+            const updated={...user,subscribed:true,trial:false,trialStart:null,paypalSubId:subscriptionId};
+            const users=getUsers();
+            const idx=users.findIndex(x=>x.id===user?.id);
+            if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false,paypalSubId:subscriptionId};saveUsers(users);}
+            saveSession(updated);
+            localStorage.setItem("sp_last_email",updated.email||"");
+            setUser(updated);
+            setScreen(S.MAIN);
+          }}/>
+        </Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
 
   if(screen===S.CONNECT){
     const WALLET_TYPES=[
@@ -536,7 +613,12 @@ export default function SignalPulsePro(){
                     </button>
                   ))}
                 </div>
-                <Btn variant="danger" onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}}>Disconnect Wallet</Btn>
+                <Btn variant="danger" onClick={()=>{
+  localStorage.removeItem("sp_wallet_addr");
+  localStorage.removeItem("sp_wallet_type");
+  localStorage.removeItem("sp_wallet_provider");
+  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
+}}>Disconnect & Remove Wallet</Btn>
               </Card>
               <ApiKeyCard
                 apiKey={cbApiKey} setApiKey={setCbApiKey}
@@ -553,7 +635,17 @@ export default function SignalPulsePro(){
             <div>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Choose your wallet</p>
               {WALLET_TYPES.map(w=>(
-                <div key={w.id} onClick={()=>{if(w.id==="manual"){setWalletType("Manual Address");}else{setWalletType(w.name);setWalletAddress("0x"+Math.random().toString(16).slice(2,12)+"..."+Math.random().toString(16).slice(2,6));setWalletConnected(true);}}}
+                <div key={w.id} onClick={()=>{
+                  if(w.id==="manual"){setWalletType("Manual Address");setWalletManualInput("");}
+                  else{
+                    const storedAddr=localStorage.getItem("sp_wallet_addr_"+w.id);
+                    const addr=storedAddr||("0x"+Math.random().toString(16).slice(2,12)+"..."+Math.random().toString(16).slice(2,6));
+                    localStorage.setItem("sp_wallet_addr",addr);
+                    localStorage.setItem("sp_wallet_type",w.name);
+                    localStorage.setItem("sp_wallet_provider",w.id);
+                    localStorage.setItem("sp_wallet_addr_"+w.id,addr);
+                    setWalletType(w.name);setWalletAddress(addr);setWalletProvider(w.id);setWalletConnected(true);
+                  }}}
                   style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",marginBottom:8,background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,cursor:"pointer",transition:"all .2s"}}>
                   <span style={{fontSize:26,flexShrink:0}}>{w.icon}</span>
                   <div style={{flex:1}}>
@@ -567,8 +659,13 @@ export default function SignalPulsePro(){
                 <Card style={{marginTop:8,marginBottom:8}}>
                   <p style={{fontSize:12,color:T.t2,fontWeight:600,marginBottom:10}}>Paste your wallet address</p>
                   <div style={{display:"flex",gap:8}}>
-                    <input value={walletAddress} onChange={e=>setWalletAddress(e.target.value)} placeholder="0x... or bc1... or any address" style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_NUM,outline:"none"}}/>
-                    <button onClick={()=>{if(walletAddress.length>8){setWalletConnected(true);}}} style={{padding:"10px 16px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13}}>Connect</button>
+                    <input value={walletManualInput} onChange={e=>setWalletManualInput(e.target.value)} placeholder="0x... or bc1... or any address" style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_NUM,outline:"none"}}/>
+                    <button onClick={()=>{if(walletManualInput.length>8){
+                      localStorage.setItem("sp_wallet_addr",walletManualInput);
+                      localStorage.setItem("sp_wallet_type","Manual Address");
+                      localStorage.setItem("sp_wallet_provider","manual");
+                      setWalletAddress(walletManualInput);setWalletType("Manual Address");setWalletProvider("manual");setWalletConnected(true);
+                    }}} style={{padding:"10px 16px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13}}>Connect</button>
                   </div>
                 </Card>
               )}
@@ -841,8 +938,22 @@ export default function SignalPulsePro(){
                         border:`1px solid ${u.subscribed?"rgba(239,68,68,.3)":"rgba(16,185,129,.3)"}`,
                         background:u.subscribed?"rgba(239,68,68,.08)":"rgba(16,185,129,.08)",
                         color:u.subscribed?T.red:T.green2,fontSize:11,fontWeight:700}}>
-                      {u.subscribed?"Revoke Access":"Grant Access"}
+                      {u.subscribed?"Revoke":"Grant Access"}
                     </button>
+                    {!u.subscribed&&(
+                      <button onClick={()=>{
+                        const users=getUsers(),idx=users.findIndex(x=>x.id===u.id);
+                        if(idx>=0){users[idx].subscribed=true;users[idx].trial=false;users[idx].freeAccess=true;saveUsers(users);}
+                        setAdminUsers(getUsers());
+                      }} style={{flex:1,padding:"7px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
+                        border:"1px solid rgba(16,185,129,.4)",background:"rgba(16,185,129,.12)",
+                        color:T.green2,fontSize:11,fontWeight:700}}>
+                        🎁 Free PRO
+                      </button>
+                    )}
+                    {u.freeAccess&&u.subscribed&&(
+                      <span style={{fontSize:9,color:T.green2,background:"rgba(16,185,129,.1)",padding:"3px 7px",borderRadius:8,fontWeight:700,border:"1px solid rgba(16,185,129,.2)",whiteSpace:"nowrap"}}>🎁 FREE</span>
+                    )}
                     {u.trial&&(
                       <button onClick={()=>{
                         const users=getUsers(),idx=users.findIndex(x=>x.id===u.id);
@@ -902,9 +1013,11 @@ export default function SignalPulsePro(){
                   <div>
                     <p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>{u.name||"—"}</p>
                     <p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>{u.email}</p>
+                    {u.paypalSubId&&<p style={{fontSize:10,color:"#60A5FA",margin:"2px 0 0",fontFamily:"monospace"}}>PP: {u.paypalSubId}</p>}
+                    {u.freeAccess&&<p style={{fontSize:10,color:T.green2,margin:"2px 0 0",fontWeight:700}}>🎁 Free Access</p>}
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <p style={{fontSize:13,fontWeight:700,color:T.green2,margin:0,fontFamily:FONT_NUM}}>$19.99/mo</p>
+                    <p style={{fontSize:13,fontWeight:700,color:u.freeAccess?T.green2:T.green2,margin:0,fontFamily:FONT_NUM}}>{u.freeAccess?"Free":"$19.99/mo"}</p>
                     <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>Since {new Date(u.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
@@ -961,8 +1074,8 @@ export default function SignalPulsePro(){
                     <p style={{fontSize:10,color:T.t3,margin:0}}>Sub since {new Date(u.createdAt).toLocaleDateString()}</p>
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <p style={{fontSize:14,fontWeight:800,color:T.green2,margin:0,fontFamily:FONT_NUM}}>$239.88</p>
-                    <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>12 × $19.99</p>
+                    <p style={{fontSize:14,fontWeight:800,color:T.green2,margin:0,fontFamily:FONT_NUM}}>${(()=>{const tY=new Date().getFullYear()-1;const sd=new Date(u.createdAt);const soy=new Date(tY,0,1);const eoy=new Date(tY,11,31);const ss=sd>soy?sd:soy;const mo=Math.min(12,Math.max(0,Math.round((eoy-ss)/(1000*60*60*24*30.44))));return(mo*19.99).toFixed(2);})()}</p>
+                    <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>{(()=>{const tY=new Date().getFullYear()-1;const sd=new Date(u.createdAt);const soy=new Date(tY,0,1);const eoy=new Date(tY,11,31);const ss=sd>soy?sd:soy;return Math.min(12,Math.max(0,Math.round((eoy-ss)/(1000*60*60*24*30.44))));})()} × $19.99</p>
                   </div>
                 </div>
               </Card>
@@ -1059,6 +1172,47 @@ export default function SignalPulsePro(){
     </div>);
   }
 
+  if(screen===S.HELP)return(
+    <div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
+      <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+        <button style={backBtnStyle} onClick={()=>setScreen(S.SETTINGS)}>←</button>
+        <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,flex:1}}>Help & Support</h2>
+      </div>
+      <div style={{padding:16}}>
+        <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(99,102,241,.1),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.3)",padding:20,textAlign:"center"}}>
+          <p style={{fontSize:32,margin:"0 0 8px"}}>👋</p>
+          <p style={{fontSize:16,fontWeight:800,color:T.t1,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>We are here to help</p>
+          <p style={{fontSize:13,color:T.t2,margin:"0 0 16px",lineHeight:1.6}}>Questions about your subscription, signals, or wallet setup? Reach out anytime.</p>
+          <button onClick={()=>window.open("mailto:"+SUPPORT_EMAIL+"?subject=SignalPulse Pro Support","_blank")}
+            style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#6366F1,#818CF8)",border:"none",borderRadius:T.r3,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,marginBottom:8}}>
+            ✉️ Email Support
+          </button>
+          <p style={{fontSize:11,color:T.t3,margin:0}}>{SUPPORT_EMAIL}</p>
+        </Card>
+        <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Frequently Asked Questions</p>
+        {[
+          ["How do I connect my wallet?","Go to the Wallet tab and tap Connect Wallet. Each wallet type (MetaMask, Coinbase, Trust, Phantom, Ledger) stores its own address separately. Switch or delete wallets anytime from the Connect screen."],
+          ["How do I enable live trading?","After connecting your wallet, tap Connect Coinbase API and enter your personal Coinbase API key and secret. Get your keys at coinbase.com under Settings then API — enable View and Trade permissions."],
+          ["How does the 30-day free trial work?","You get full Pro access for 30 days, no credit card required. The countdown timer shows in the top bar. Subscribe anytime before it expires to keep access."],
+          ["How do AI signals work?","Prices update every 45 seconds. BUY and EXIT signals are based on momentum and trend data. The Pivot Advisor uses Claude AI to suggest the best coin to rotate into when you get an EXIT signal."],
+          ["Is my wallet safe?","Yes. Wallets connect read-only by default. Your private keys never leave your device. Coinbase API keys for live trading are stored only in your browser session and cleared when you close the tab."],
+          ["What does HODL mean?","HODL means no clear directional signal right now — the coin is consolidating. It is not negative, just neutral. Watch for a breakout. Invested coins always show at the top of your Signals list."],
+          ["Can I use this on mobile?","Yes. SignalPulse Pro is fully mobile-optimized and works on any browser. Sign in with the same email to access your account from any device."],
+          ["How do I cancel my subscription?","Cancel anytime from your PayPal account under Payments then Subscriptions. Your access continues until the end of your current billing period."],
+        ].map(([q,a])=>(
+          <Card key={q} style={{marginBottom:10}}>
+            <p style={{fontSize:13,fontWeight:700,color:T.t1,margin:"0 0 6px"}}>{q}</p>
+            <p style={{fontSize:12,color:T.t2,margin:0,lineHeight:1.6}}>{a}</p>
+          </Card>
+        ))}
+        <Card style={{marginTop:6,borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.05)"}}>
+          <p style={{fontSize:12,color:T.accent2,fontWeight:700,marginBottom:4}}>📱 Response Time</p>
+          <p style={{fontSize:12,color:T.t3,margin:0,lineHeight:1.6}}>We typically respond within 24 hours on business days. Include your account email when writing in so we can find your account quickly.</p>
+        </Card>
+      </div>
+    </div>
+  );
+
   if(screen===S.SETTINGS)return(<div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
     <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}><button style={backBtnStyle} onClick={()=>setScreen(S.MAIN)}>←</button><h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.02em",flex:1}}>Settings</h2>{isOwner&&<Pill label="PRO"/>}</div>
     <div style={{padding:16}}>
@@ -1075,12 +1229,16 @@ export default function SignalPulsePro(){
       </Card>
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p><p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>{isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}</p>{user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}{!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}{user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}</Card>
       {isOwner&&<Btn variant="secondary" onClick={()=>{setAdminUsers(getUsers());setAdminTab("overview");setScreen(S.ADMIN);}} style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
+      <Btn variant="secondary" onClick={()=>setScreen(S.HELP)} style={{marginBottom:10}}>❓ Help & Support →</Btn>
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⚙️ System</p><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Market Data</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>CoinGecko · 45s refresh</span></div><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Trading Engine</span><span style={{fontSize:11,fontWeight:700,color:cbKeysSaved?T.green2:T.gold2,background:cbKeysSaved?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${cbKeysSaved?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{cbKeysSaved?"LIVE":"PAPER"}</span></div><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:T.t2}}>AI Engine</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>Claude Sonnet 4</span></div></Card>
       <Btn variant="danger" onClick={()=>{
   clearSession();
   localStorage.removeItem("sp_last_email");
+  localStorage.removeItem("sp_wallet_addr");
+  localStorage.removeItem("sp_wallet_type");
+  localStorage.removeItem("sp_wallet_provider");
   setUser(null);setIsOwner(false);
-  setWalletConnected(false);setWalletAddress("");setWalletType("");
+  setWalletConnected(false);setWalletAddress("");setWalletType("");setWalletProvider("");
   setScreen(S.LANDING);
 }}>Sign Out</Btn>
     </div>
@@ -1123,7 +1281,17 @@ export default function SignalPulsePro(){
         <div style={{padding:"16px 16px 70px"}}>
           {(tab==="signals"||tab==="market")&&(<div style={{position:"relative",marginBottom:14}}><span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:T.t3,pointerEvents:"none"}}>🔍</span><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder={`Search ${tab==="signals"?"coins, signals":"coins, prices"}...`} style={{width:"100%",background:T.bg2,border:`1px solid ${searchQuery?T.accent:T.b1}`,borderRadius:T.r3,padding:"11px 36px 11px 38px",color:T.t1,fontSize:14,fontFamily:FONT_BODY,outline:"none",boxSizing:"border-box",transition:"all .2s"}}/>{searchQuery&&<button onClick={()=>setSearchQuery("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,fontSize:18,cursor:"pointer",lineHeight:1,padding:"2px 6px"}}>×</button>}</div>)}
 
-          {tab==="signals"&&COINS.filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())||(signals[coin.symbol]?.action||"").toLowerCase().includes(searchQuery.toLowerCase())).map(coin=>{
+          {tab==="signals"&&[...COINS].filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())||(signals[coin.symbol]?.action||"").toLowerCase().includes(searchQuery.toLowerCase()))
+            .sort((a,b)=>{
+              const aHeld=(portfolio[a.symbol]?.amount||0)>0;
+              const bHeld=(portfolio[b.symbol]?.amount||0)>0;
+              if(aHeld&&!bHeld) return -1;
+              if(!aHeld&&bHeld) return 1;
+              const aChg=Math.abs(signals[a.symbol]?.change||0);
+              const bChg=Math.abs(signals[b.symbol]?.change||0);
+              return bChg-aChg;
+            })
+            .map(coin=>{
             const cg=prices[coin.cgId]||{},sig=signals[coin.symbol],hist=histories[coin.cgId]||[];
             const holding=portfolio[coin.symbol],holdBal=holding?.amount||0,holdUSD=holdBal*(cg.usd||0);
             const pnlPct=holding?.avgBuy&&cg.usd?((cg.usd-holding.avgBuy)/holding.avgBuy)*100:null;
@@ -1154,14 +1322,21 @@ export default function SignalPulsePro(){
               <button onClick={enablePush} style={{padding:"6px 12px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.3)":T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:12,fontWeight:600,background:pushEnabled?"rgba(16,185,129,.1)":T.bg2,color:pushEnabled?T.green2:T.t3}}>{pushEnabled?"🔔 On":"🔔 Alerts"}</button>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 0.7fr",gap:8,padding:"0 4px",marginBottom:8}}>{["Coin","Price","24H","★"].map(h=>(<p key={h} style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0,textAlign:h==="Price"||h==="24H"?"right":"left"}}>{h}</p>))}</div>
-            {(marketFilter==="all"?SIGNAL_COINS:SIGNAL_COINS.filter(c=>favorites.includes(c.symbol))).filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())).map(coin=>{
-              const cg=prices[coin.cgId]||{},mkt=marketData.find(m=>m.id===coin.cgId)||{},ch=cg.usd_24h_change||0,isFav=favorites.includes(coin.symbol),sig=signals[coin.symbol];
-              return(<div key={coin.symbol} style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",marginBottom:8,cursor:"pointer"}} onClick={()=>{setChartCoin(coin);setChartFrame("24H");setScreen("chart");}}>
+            {(marketFilter==="all"
+              ?(marketData.length>0?marketData:[]).filter(m=>!searchQuery||m.symbol?.toLowerCase().includes(searchQuery.toLowerCase())||m.name?.toLowerCase().includes(searchQuery.toLowerCase()))
+              :(marketData.length>0?marketData:[]).filter(m=>favorites.includes((m.symbol||"").toUpperCase()))
+            ).map(m=>{
+              const sym=(m.symbol||"").toUpperCase();
+              const coin=COINS.find(c=>c.symbol===sym)||{symbol:sym,name:m.name,color:"#6366F1",cgId:m.id};
+              const ch=m.price_change_percentage_24h||0;
+              const isFav=favorites.includes(sym);
+              const sig=signals[sym];
+              return(<div key={m.id} style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px",marginBottom:8,cursor:"pointer"}} onClick={()=>{setChartCoin(coin);setChartFrame("24H");setScreen("chart");}}>
                 <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 0.7fr",gap:8,alignItems:"center"}}>
-                  <div style={{display:"flex",gap:10,alignItems:"center"}}><CoinAvatar coin={coin} size={34}/><div><p style={{fontWeight:700,fontSize:14,margin:0,fontFamily:FONT_DISPLAY}}>{coin.symbol}</p><p style={{fontSize:10,color:T.t3,margin:0}}>{mkt.market_cap_rank?"#"+mkt.market_cap_rank:coin.name.slice(0,8)}</p></div></div>
-                  <div style={{textAlign:"right"}}><p style={{fontSize:13,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{cg.usd?usd(cg.usd):"–"}</p><p style={{fontSize:10,color:T.t3,margin:0}}>{mkt.market_cap?`$${(mkt.market_cap/1e9).toFixed(1)}B`:"–"}</p></div>
+                  <div style={{display:"flex",gap:10,alignItems:"center"}}><CoinAvatar coin={coin} size={34}/><div><p style={{fontWeight:700,fontSize:14,margin:0,fontFamily:FONT_DISPLAY}}>{sym}</p><p style={{fontSize:10,color:T.t3,margin:0}}>#{m.market_cap_rank||"–"}</p></div></div>
+                  <div style={{textAlign:"right"}}><p style={{fontSize:13,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{m.current_price?usd(m.current_price):"–"}</p><p style={{fontSize:10,color:T.t3,margin:0}}>{m.market_cap?`$${(m.market_cap/1e9).toFixed(1)}B`:"–"}</p></div>
                   <div style={{textAlign:"right"}}><p style={{fontSize:13,fontWeight:700,fontFamily:FONT_NUM,color:ch>=0?T.green2:T.red,margin:0}}>{pct(ch)}</p>{sig&&<Pill label={sig.action}/>}</div>
-                  <div style={{textAlign:"right"}}><button onClick={e=>{e.stopPropagation();toggleFavorite(coin.symbol);}} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:isFav?T.gold:"rgba(255,255,255,.15)",padding:0}}>★</button></div>
+                  <div style={{textAlign:"right"}}><button onClick={e=>{e.stopPropagation();toggleFavorite(sym);}} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:isFav?T.gold:"rgba(255,255,255,.15)",padding:0}}>★</button></div>
                 </div>
               </div>);
             })}
