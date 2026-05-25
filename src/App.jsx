@@ -78,7 +78,18 @@ async function fetchCGMarketData(cgIds) { const ids=cgIds.join(","); const r=awa
 const CHART_DAYS = {"1H":1,"24H":1,"7D":7,"30D":30,"6M":180,"1Y":365,"3Y":1095,"5Y":1825};
 async function fetchCGChart(cgId,timeframe) { const days=CHART_DAYS[timeframe]||1; const r=await fetch(`https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=${days}`); if(!r.ok) throw new Error("CG chart"); const d=await r.json(); return d.prices||[]; }
 
-async function cbCall(action,params={}) { if(!CB_LIVE) return cbMock(action,params); const r=await fetch("/api/coinbase-trade",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...params})}); const d=await r.json(); if(!r.ok) throw new Error(d.error||"Coinbase error"); return d; }
+async function cbCall(action,params={}) {
+  const apiKey    = sessionStorage.getItem("sp_cb_key")||"";
+  const apiSecret = sessionStorage.getItem("sp_cb_secret")||"";
+  if(!apiKey||!apiSecret) return cbMock(action,params); // paper mode fallback
+  const r=await fetch("/api/coinbase-trade",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action,apiKey,apiSecret,...params}),
+  });
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error||"Coinbase error");
+  return d;
+}
 async function cbMock(action,params) { await new Promise(r=>setTimeout(r,1500+Math.random()*800)); switch(action){case "balances":return{balances:{}};case "market":return{orderId:"cb_"+Date.now(),status:"completed"};case "limit":return{orderId:"cb_"+Date.now(),status:"pending"};case "cancel":return{success:true};case "orders":return{orders:[]};default:return{};} }
 async function cbPlaceMarketOrder(mode,symbol,usdAmount,currentPrice){return cbCall("market",{mode,symbol,usdAmount,currentPrice});}
 async function cbPlaceLimitOrder(mode,symbol,usdAmount,limitPrice){return cbCall("limit",{mode,symbol,usdAmount,limitPrice});}
@@ -165,6 +176,51 @@ function WalletTxModal({type,onClose,onSubmit,prices}){
   );
 }
 
+
+function ApiKeyCard({apiKey,setApiKey,apiSecret,setApiSecret,saved,onSave,onClear,error}){
+  const [showSecret,setShowSecret]=useState(false);
+  const [expanded,setExpanded]=useState(!saved);
+  return(
+    <div style={{background:saved?"rgba(16,185,129,.06)":"rgba(99,102,241,.06)",border:`1px solid ${saved?"rgba(16,185,129,.3)":"rgba(99,102,241,.3)"}`,borderRadius:12,padding:16,marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:expanded?14:0}}>
+        <div>
+          <p style={{fontSize:13,fontWeight:700,color:saved?T.green2:T.accent2,margin:0}}>{saved?"✓ Coinbase API Connected — Live Trading ON":"⚡ Connect Coinbase API for Live Trading"}</p>
+          <p style={{fontSize:11,color:T.t3,margin:"2px 0 0",lineHeight:1.4}}>{saved?"Your keys are stored in this browser session only":"Enter your keys to enable real buy/sell/transfer"}</p>
+        </div>
+        <button onClick={()=>setExpanded(p=>!p)} style={{background:"none",border:"none",color:T.t3,fontSize:18,cursor:"pointer",padding:"0 4px"}}>{expanded?"▲":"▼"}</button>
+      </div>
+      {expanded&&(
+        <>
+          <div style={{background:"rgba(0,0,0,.25)",borderRadius:8,padding:"10px 12px",marginBottom:14,fontSize:11,color:T.t2,lineHeight:1.8}}>
+            <strong style={{color:T.accent2}}>How to get your Coinbase API keys:</strong><br/>
+            1. Go to <strong>coinbase.com</strong> → Settings → API<br/>
+            2. Click <strong>"New API Key"</strong><br/>
+            3. Enable <strong>View + Trade</strong> permissions<br/>
+            4. Copy your Key and Secret below
+          </div>
+          <div style={{marginBottom:10}}>
+            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>API Key</p>
+            <input type="text" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="organizations/xxx/apiKeys/xxx"
+              style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
+          </div>
+          <div style={{marginBottom:14,position:"relative"}}>
+            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>API Secret</p>
+            <input type={showSecret?"text":"password"} value={apiSecret} onChange={e=>setApiSecret(e.target.value)} placeholder="-----BEGIN EC PRIVATE KEY-----"
+              style={{width:"100%",background:T.bg0,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 40px 10px 12px",color:T.t1,fontSize:12,outline:"none",boxSizing:"border-box",fontFamily:"monospace"}}/>
+            <button onClick={()=>setShowSecret(p=>!p)} style={{position:"absolute",right:10,top:"calc(50% + 10px)",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,cursor:"pointer",fontSize:14}}>{showSecret?"🙈":"👁️"}</button>
+          </div>
+          {error&&<p style={{fontSize:12,color:T.red,marginBottom:10}}>⚠️ {error}</p>}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onSave} style={{flex:2,padding:"11px",background:"linear-gradient(135deg,#059669,#10B981)",border:"none",borderRadius:T.r3,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY}}>{saved?"Update Keys":"Save & Enable Live Trading"}</button>
+            {saved&&<button onClick={onClear} style={{flex:1,padding:"11px",background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:T.r3,color:T.red,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>Clear</button>}
+          </div>
+          <p style={{fontSize:10,color:T.t3,marginTop:10,lineHeight:1.6}}>🔐 Keys are stored only in your browser session memory and cleared when you close the browser. They are only sent to execute your own trades — never stored on our servers.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SignalPulsePro(){
   const [screen,setScreen]=useState(S.SPLASH);
   const [tab,setTab]=useState("signals");
@@ -222,6 +278,10 @@ export default function SignalPulsePro(){
   const [walletType,setWalletType]=useState("");
   const [walletConnected,setWalletConnected]=useState(false);
   const [walletTx,setWalletTx]=useState(null);
+  const [cbApiKey,setCbApiKey]=useState(()=>sessionStorage.getItem("sp_cb_key")||"");
+  const [cbApiSecret,setCbApiSecret]=useState(()=>sessionStorage.getItem("sp_cb_secret")||"");
+  const [cbKeysSaved,setCbKeysSaved]=useState(()=>!!(sessionStorage.getItem("sp_cb_key")));
+  const [cbKeysError,setCbKeysError]=useState("");
   const [phoneNumber,setPhoneNumber]=useState("");
   const [smsEnabled,setSmsEnabled]=useState(false);
 
@@ -323,6 +383,23 @@ export default function SignalPulsePro(){
   const openDeep=async(coin)=>{setDeepCoin(coin);setScreen(S.DEEP);if(deepData[coin.symbol])return;setDeepBusy(p=>({...p,[coin.symbol]:true}));try{const result=await aiDeep(coin,prices[coin.cgId]?.usd,prices[coin.cgId]?.usd_24h_change,histories[coin.cgId]);setDeepData(p=>({...p,[coin.symbol]:result}));}catch(_){setDeepData(p=>({...p,[coin.symbol]:{summary:"Analysis unavailable.",signal:"HODL",confidence:50,riskLevel:"MEDIUM"}}));}setDeepBusy(p=>({...p,[coin.symbol]:false}));};
   const markRead=()=>{setNotes(p=>p.map(n=>({...n,read:true})));setUnread(0);};
 
+  const saveCbKeys=()=>{
+    if(!cbApiKey||cbApiKey.length<10){setCbKeysError("Enter a valid API key.");return;}
+    if(!cbApiSecret||cbApiSecret.length<10){setCbKeysError("Enter a valid API secret.");return;}
+    sessionStorage.setItem("sp_cb_key",cbApiKey);
+    sessionStorage.setItem("sp_cb_secret",cbApiSecret);
+    setCbKeysSaved(true);setCbKeysError("");
+    // Auto-sync real balances when keys saved
+    cbCall("balances",{}).then(d=>{
+      if(d.balances)setPortfolio(prev=>({...prev,...Object.fromEntries(Object.entries(d.balances).map(([k,v])=>[k,{amount:v.amount,avgBuy:0}]))}));
+    }).catch(()=>{});
+  };
+
+  const clearCbKeys=()=>{
+    sessionStorage.removeItem("sp_cb_key");sessionStorage.removeItem("sp_cb_secret");
+    setCbApiKey("");setCbApiSecret("");setCbKeysSaved(false);
+  };
+
   const appStyle={minHeight:"100vh",background:T.bg0,color:T.t1,fontFamily:FONT_BODY,maxWidth:430,margin:"0 auto",position:"relative"};
   const pageStyle={...appStyle,padding:"44px 20px 60px"};
   const hdrStyle={position:"sticky",top:0,zIndex:50,background:`${T.bg0}ee`,backdropFilter:"blur(20px)",borderBottom:`1px solid ${T.b2}`};
@@ -383,9 +460,15 @@ export default function SignalPulsePro(){
                 </div>
                 <Btn variant="danger" onClick={()=>{setWalletConnected(false);setWalletAddress("");setWalletType("");}}>Disconnect Wallet</Btn>
               </Card>
+              <ApiKeyCard
+                apiKey={cbApiKey} setApiKey={setCbApiKey}
+                apiSecret={cbApiSecret} setApiSecret={setCbApiSecret}
+                saved={cbKeysSaved} onSave={saveCbKeys} onClear={clearCbKeys}
+                error={cbKeysError}
+              />
               <Card style={{borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.05)"}}>
                 <p style={{fontSize:12,color:T.accent2,fontWeight:700,marginBottom:4}}>🔐 Your wallet is private</p>
-                <p style={{fontSize:11,color:T.t3,lineHeight:1.6,margin:0}}>Only you can see your wallet address and balances. Other users cannot access your wallet data. You sign every transaction from your own device.</p>
+                <p style={{fontSize:11,color:T.t3,lineHeight:1.6,margin:0}}>Only you can see your wallet, API keys, and balances. Other users cannot access your data. You sign every transaction from your own device.</p>
               </Card>
             </div>
           ):(
@@ -488,7 +571,12 @@ export default function SignalPulsePro(){
         <div style={{flex:1}}><h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Trade {tradeCoin.symbol}</h2><p style={{fontSize:12,color:T.t2,margin:0}}>{usd(currentPrice)} · <span style={{color:change>=0?T.green2:T.red}}>{pct(change)}</span></p></div>
       </div>
       <div style={{padding:16}}>
-        <Card style={{marginBottom:14,padding:12,borderColor:CB_LIVE?"rgba(16,185,129,.3)":"rgba(245,158,11,.3)",background:CB_LIVE?"rgba(16,185,129,.06)":"rgba(245,158,11,.06)"}}><p style={{fontSize:12,fontWeight:700,color:CB_LIVE?T.green2:T.gold,margin:"0 0 2px"}}>{CB_LIVE?"🟢 Coinbase Live Trading":"🟡 Coinbase Paper Trading"}</p><p style={{fontSize:11,color:T.t3,margin:0}}>{CB_LIVE?"Orders execute on your real Coinbase account.":"Simulated orders — add API keys to Vercel to go live."}</p></Card>
+        <Card style={{marginBottom:14,padding:12,borderColor:cbKeysSaved?"rgba(16,185,129,.3)":"rgba(245,158,11,.3)",background:cbKeysSaved?"rgba(16,185,129,.06)":"rgba(245,158,11,.06)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><p style={{fontSize:12,fontWeight:700,color:cbKeysSaved?T.green2:T.gold,margin:"0 0 2px"}}>{cbKeysSaved?"🟢 Live Trading — Your Coinbase Account":"🟡 Paper Trading Mode"}</p><p style={{fontSize:11,color:T.t3,margin:0}}>{cbKeysSaved?"Real orders execute on your personal Coinbase account.":"Connect your Coinbase API keys in the Wallet tab to go live."}</p></div>
+            {!cbKeysSaved&&<button onClick={()=>setScreen(S.CONNECT)} style={{padding:"6px 12px",borderRadius:T.r3,border:`1px solid rgba(99,102,241,.3)`,background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,flexShrink:0,marginLeft:10}}>Connect API →</button>}
+          </div>
+        </Card>
         <div style={{display:"flex",gap:0,marginBottom:16,background:T.bg1,borderRadius:T.r3,padding:4,border:`1px solid ${T.b1}`}}>{["buy","sell"].map(m=>(<button key={m} onClick={()=>{setTradeMode(m);setTradeAmount("");setTradeResult(null);setTradeError("");}} style={{flex:1,padding:"10px",borderRadius:T.r3-2,border:"none",cursor:"pointer",fontFamily:FONT_BODY,fontSize:14,fontWeight:700,transition:"all .2s",background:tradeMode===m?(m==="buy"?"linear-gradient(135deg,#059669,#10B981)":"linear-gradient(135deg,#DC2626,#EF4444)"):"transparent",color:tradeMode===m?"#fff":T.t3}}>{m==="buy"?"▲ Buy":"▼ Sell"}</button>))}</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>{["market","limit"].map(t=>(<button key={t} onClick={()=>{setOrderType(t);setTradeResult(null);setTradeError("");}} style={{flex:1,padding:"9px",borderRadius:T.r3,border:`1px solid ${orderType===t?T.accent:T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13,fontWeight:600,background:orderType===t?"rgba(99,102,241,.15)":T.bg2,color:orderType===t?T.accent2:T.t3}}>{t==="market"?"⚡ Market":"◎ Limit"}</button>))}</div>
         <Card style={{marginBottom:14,padding:12,background:"rgba(255,255,255,.03)"}}><div style={{display:"flex",justifyContent:"space-between"}}><div><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>Available USDC</p><p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color:T.t1,margin:0}}>{usd(usdcBal)}</p></div><div style={{textAlign:"right"}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{tradeCoin.symbol} Holdings</p><p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color:tradeCoin.color,margin:0}}>{fmt(coinBal,6)}<span style={{fontSize:12,color:T.t3,marginLeft:4}}>({usd(coinValUSD)})</span></p></div></div></Card>
@@ -606,7 +694,7 @@ export default function SignalPulsePro(){
       </Card>
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p><p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>{isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}</p>{user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}{!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}{user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}</Card>
       {isOwner&&<Btn variant="secondary" onClick={()=>{setAdminUsers(getUsers());setScreen(S.ADMIN);}} style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
-      <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⚙️ System</p><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Market Data</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>CoinGecko · 45s refresh</span></div><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Trading Engine</span><span style={{fontSize:11,fontWeight:700,color:CB_LIVE?T.green2:T.gold2,background:CB_LIVE?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${CB_LIVE?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{CB_LIVE?"LIVE":"PAPER"}</span></div><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:T.t2}}>AI Engine</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>Claude Sonnet 4</span></div></Card>
+      <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⚙️ System</p><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Market Data</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>CoinGecko · 45s refresh</span></div><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,color:T.t2}}>Trading Engine</span><span style={{fontSize:11,fontWeight:700,color:cbKeysSaved?T.green2:T.gold2,background:cbKeysSaved?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${cbKeysSaved?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{cbKeysSaved?"LIVE":"PAPER"}</span></div><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:T.t2}}>AI Engine</span><span style={{fontSize:13,color:T.t1,fontWeight:600}}>Claude Sonnet 4</span></div></Card>
       <Btn variant="danger" onClick={()=>{setUser(null);setIsOwner(false);setScreen(S.LANDING);}}>Sign Out</Btn>
     </div>
   </div>);
@@ -709,7 +797,7 @@ export default function SignalPulsePro(){
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
                   {[{label:"↓ BUY",tx:"BUY",c:T.green2,bg:"rgba(16,185,129,.12)",b:"rgba(16,185,129,.3)"},{label:"↑ SELL",tx:"SELL",c:T.gold2,bg:"rgba(245,158,11,.1)",b:"rgba(245,158,11,.3)"},{label:"→ SEND",tx:"TRANSFER",c:T.accent2,bg:"rgba(99,102,241,.12)",b:"rgba(99,102,241,.3)"}].map(btn=>(
-                    <button key={btn.tx} onClick={()=>setScreen(S.CONNECT)} style={{padding:"10px 0",background:btn.bg,border:`1px solid ${btn.b}`,borderRadius:T.r3,color:btn.c,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:FONT_BODY}}>{btn.label}</button>
+                    <button key={btn.tx} onClick={()=>{setScreen(S.CONNECT);}} style={{padding:"10px 0",background:btn.bg,border:`1px solid ${btn.b}`,borderRadius:T.r3,color:btn.c,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:FONT_BODY}}>{btn.label}</button>
                   ))}
                 </div>
               </Card>
