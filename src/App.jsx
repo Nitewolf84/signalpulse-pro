@@ -555,19 +555,20 @@ export default function SignalPulsePro(){
   setTrialDaysLeft(30);
   setUser(updated);
   setScreen(S.MAIN);
-}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}</Card><Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)",padding:20}}>
-          <p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>Subscribe with PayPal</p>
-          <p style={{fontSize:12,color:"#94A3B8",marginBottom:16,lineHeight:1.5}}>$19.99/month · Cancel anytime · Instant access</p>
-          <PayPalButton onSuccess={(subscriptionId)=>{
-            const updated={...user,subscribed:true,trial:false,trialStart:null,paypalSubId:subscriptionId};
-            const users=getUsers();
-            const idx=users.findIndex(x=>x.id===user?.id);
-            if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false,paypalSubId:subscriptionId};saveUsers(users);}
-            saveSession(updated);
-            localStorage.setItem("sp_last_email",updated.email||"");
-            setUser(updated);
-            setScreen(S.MAIN);
-          }}/>
+}}>🎁 Start Free Trial — No Card Needed</Btn></Card><Divider label="or subscribe now"/><Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}><p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p><p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>$19<span style={{fontSize:24,color:T.t2}}>.99</span></p><p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>{["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","20 coins monitored around the clock","Deep Claude AI analysis with price targets","Connect any wallet — MetaMask, Coinbase, Trust, Ledger","Buy, sell & transfer directly from SignalPulse","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(<div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}><span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span></div>))}
+          <div style={{marginTop:20,paddingTop:20,borderTop:"1px solid rgba(255,255,255,.08)"}}>
+            <p style={{fontSize:11,color:"#94A3B8",textAlign:"center",marginBottom:12,fontWeight:600,letterSpacing:".04em",textTransform:"uppercase"}}>Subscribe · $19.99/month · Cancel anytime</p>
+            <PayPalButton onSuccess={(subscriptionId)=>{
+              const updated={...user,subscribed:true,trial:false,trialStart:null,paypalSubId:subscriptionId};
+              const users=getUsers();
+              const idx=users.findIndex(x=>x.id===user?.id);
+              if(idx>=0){users[idx]={...users[idx],subscribed:true,trial:false,paypalSubId:subscriptionId};saveUsers(users);}
+              saveSession(updated);
+              localStorage.setItem("sp_last_email",updated.email||"");
+              setUser(updated);
+              setScreen(S.MAIN);
+            }}/>
+          </div>
         </Card><Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn></div></div>);
 
   if(screen===S.CONNECT){
