@@ -24,7 +24,7 @@ const COINS = [
 const S = {
   SPLASH:"splash", LANDING:"landing", LOGIN:"login", SIGNUP:"signup",
   PAYWALL:"paywall", MAIN:"main", PIVOT:"pivot", DEEP:"deep",
-  SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect"
+  SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect", TRADE:"trade"
 };
 
 const FONT_DISPLAY = "'Clash Display', 'Sora', 'Plus Jakarta Sans', sans-serif";
@@ -87,7 +87,10 @@ async function fetchCGPrices() {
   return r.json();
 }
 
-// ─── UPHOLD (mock — swap comments for real API once credentials are set) ──────
+// ─── UPHOLD API LAYER ────────────────────────────────────────────────────────
+// All real Uphold calls go through your Vercel serverless functions in /api/
+// Swap the mock lines for the REAL lines once your partner credentials are approved.
+
 async function upholdFetchBalances(accessToken) {
   // REAL: const r = await fetch('/api/uphold-balances', { headers:{ Authorization:`Bearer ${accessToken}` }});
   //       return r.json();
@@ -99,9 +102,64 @@ async function upholdFetchBalances(accessToken) {
     USDC: { amount:1250,   avgBuy:1     },
   };
 }
+
 function upholdGetAuthURL() {
   // REAL: return `https://uphold.com/authorize/${UPHOLD_CLIENT_ID}?scope=${encodeURIComponent(UPHOLD_SCOPES)}&redirect_uri=${encodeURIComponent(UPHOLD_REDIRECT_URI)}&response_type=code&state=${Date.now()}`;
   return "#";
+}
+
+// ─── COINBASE ADVANCED TRADE API ─────────────────────────────────────────────
+// All calls go through /api/coinbase-trade.js (Vercel serverless function)
+// which signs requests with your COINBASE_API_KEY + COINBASE_API_SECRET env vars.
+// Set those in Vercel → Settings → Environment Variables to go live.
+
+const CB_LIVE = !!(
+  typeof process !== "undefined" &&
+  process.env?.REACT_APP_COINBASE_LIVE === "true"
+);
+
+async function cbCall(action, params = {}) {
+  // When CB_LIVE is false (keys not yet set), run in paper/simulation mode
+  if (!CB_LIVE) return cbMock(action, params);
+  const r = await fetch("/api/coinbase-trade", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...params }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || "Coinbase error");
+  return d;
+}
+
+// ─── PAPER TRADING MOCK (active until REACT_APP_COINBASE_LIVE=true) ──────────
+async function cbMock(action, params) {
+  await new Promise(r => setTimeout(r, 1500 + Math.random() * 800));
+  switch (action) {
+    case "balances": return { balances: {} }; // wallet shows Uphold balances
+    case "market":   return { orderId: "cb_"+Date.now(), status: "completed" };
+    case "limit":    return { orderId: "cb_"+Date.now(), status: "pending"   };
+    case "cancel":   return { success: true };
+    case "orders":   return { orders: [] };
+    default:         return {};
+  }
+}
+
+// ─── PUBLIC TRADING FUNCTIONS (used by the UI) ────────────────────────────────
+async function cbPlaceMarketOrder(mode, symbol, usdAmount, currentPrice) {
+  return cbCall("market", { mode, symbol, usdAmount, currentPrice });
+}
+async function cbPlaceLimitOrder(mode, symbol, usdAmount, limitPrice) {
+  return cbCall("limit", { mode, symbol, usdAmount, limitPrice });
+}
+async function cbCancelOrder(orderId) {
+  return cbCall("cancel", { orderId });
+}
+async function cbFetchOpenOrders() {
+  return cbCall("orders");
+}
+async function cbFetchBalances() {
+  const d = await cbCall("balances");
+  return d.balances || {};
 }
 
 // ─── CLAUDE AI ────────────────────────────────────────────────────────────────
@@ -314,6 +372,17 @@ export default function SignalPulsePro() {
   const priceRef                   = useRef(null);
   const [portfolio,setPortfolio]     = useState({}); // empty until Uphold connects
   const [tradeLog,setTradeLog]     = useState([]);
+
+  // Trading state
+  const [tradeCoin,setTradeCoin]     = useState(null);
+  const [tradeMode,setTradeMode]     = useState("buy");    // "buy" | "sell"
+  const [orderType,setOrderType]     = useState("market"); // "market" | "limit"
+  const [tradeAmount,setTradeAmount] = useState("");       // USD amount
+  const [limitPrice,setLimitPrice]   = useState("");       // limit price USD
+  const [tradeBusy,setTradeBusy]     = useState(false);
+  const [tradeResult,setTradeResult] = useState(null);
+  const [tradeError,setTradeError]   = useState("");
+  const [openOrders,setOpenOrders]   = useState([]);       // pending limit orders
   const [pivotCoin,setPivotCoin]   = useState(null);
   const [pivotRec,setPivotRec]     = useState(null);
   const [pivotBusy,setPivotBusy]   = useState(false);
@@ -432,6 +501,74 @@ export default function SignalPulsePro() {
       setUser({id:"owner",email:"owner@signalpulse.app",name:"Owner",subscribed:true,provider:"owner"});
       setScreen(S.MAIN);
     } else { setAuthErr("Invalid owner key."); }
+  };
+
+  const openTrade = (coin, mode="buy")=>{
+    setTradeCoin(coin);
+    setTradeMode(mode);
+    setOrderType("market");
+    setTradeAmount("");
+    setLimitPrice(fmt(prices[coin.cgId]?.usd || 0));
+    setTradeResult(null);
+    setTradeError("");
+    setScreen(S.TRADE);
+  };
+
+  const executeTradeOrder = async()=>{
+    if(!tradeAmount||isNaN(Number(tradeAmount))){ setTradeError("Enter a valid USD amount."); return; }
+    if(orderType==="limit"&&(!limitPrice||isNaN(Number(limitPrice)))){ setTradeError("Enter a valid limit price."); return; }
+    const amt = Number(tradeAmount);
+    const currentPrice = prices[tradeCoin.cgId]?.usd || 1;
+    if(tradeMode==="buy"){
+      const usdcBal = portfolio["USDC"]?.amount || 0;
+      if(amt > usdcBal){ setTradeError(`Insufficient USDC. You have ${usd(usdcBal)}.`); return; }
+    } else {
+      const coinBal = (portfolio[tradeCoin.symbol]?.amount || 0) * currentPrice;
+      if(amt > coinBal){ setTradeError(`Insufficient ${tradeCoin.symbol}. Value: ${usd(coinBal)}.`); return; }
+    }
+    setTradeBusy(true); setTradeError(""); setTradeResult(null);
+    try {
+      let result;
+      const execPrice = prices[tradeCoin.cgId]?.usd || 1;
+      if(orderType==="market"){
+        result = await cbPlaceMarketOrder(tradeMode, tradeCoin.symbol, amt, execPrice);
+        const coinAmt = amt / execPrice;
+        // Optimistic portfolio update (real balances sync on next Uphold refresh)
+        setPortfolio(prev=>{
+          const next={...prev};
+          if(tradeMode==="buy"){
+            next["USDC"]={...next["USDC"], amount:Math.max(0,(next["USDC"]?.amount||0)-amt)};
+            const prevCoin=next[tradeCoin.symbol]||{amount:0,avgBuy:execPrice};
+            const newAmt=(prevCoin.amount||0)+coinAmt;
+            const newAvg=((prevCoin.amount||0)*prevCoin.avgBuy+coinAmt*execPrice)/newAmt;
+            next[tradeCoin.symbol]={amount:newAmt,avgBuy:newAvg};
+          } else {
+            const coinQty=amt/execPrice;
+            next[tradeCoin.symbol]={...next[tradeCoin.symbol],amount:Math.max(0,(next[tradeCoin.symbol]?.amount||0)-coinQty)};
+            next["USDC"]={...next["USDC"],amount:(next["USDC"]?.amount||0)+amt};
+          }
+          return next;
+        });
+        const logEntry={id:result.orderId||("cb_"+Date.now()),time:Date.now(),type:"market",mode:tradeMode,coin:tradeCoin.symbol,usdAmt:amt,price:execPrice,status:"completed",exchange:"Coinbase"};
+        setTradeLog(prev=>[logEntry,...prev]);
+        setTradeResult({type:"market",mode:tradeMode,usdAmt:amt,price:execPrice,coinAmt,status:"completed"});
+      } else {
+        result = await cbPlaceLimitOrder(tradeMode, tradeCoin.symbol, amt, Number(limitPrice));
+        const order={id:result.orderId||("cb_"+Date.now()),time:Date.now(),type:"limit",mode:tradeMode,coin:tradeCoin.symbol,usdAmt:amt,limitPrice:Number(limitPrice),status:"pending",exchange:"Coinbase"};
+        setOpenOrders(prev=>[order,...prev]);
+        setTradeLog(prev=>[order,...prev]);
+        setTradeResult({type:"limit",mode:tradeMode,usdAmt:amt,limitPrice:Number(limitPrice),status:"pending"});
+      }
+    } catch(e){ setTradeError(e.message||"Trade failed. Please try again."); }
+    setTradeBusy(false);
+  };
+
+  const cancelOrder = async(orderId)=>{
+    try {
+      await cbCancelOrder(orderId);
+      setOpenOrders(prev=>prev.filter(o=>o.id!==orderId));
+      setTradeLog(prev=>prev.map(t=>t.id===orderId?{...t,status:"cancelled"}:t));
+    } catch(e){ setTradeError("Cancel failed."); }
   };
 
   const openPivot = async(symbol)=>{
@@ -667,6 +804,201 @@ export default function SignalPulsePro() {
       </div>
     </div>
   );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TRADE SCREEN
+  // ══════════════════════════════════════════════════════════════════════════
+  if(screen===S.TRADE&&tradeCoin) {
+    const currentPrice = prices[tradeCoin.cgId]?.usd || 0;
+    const change = prices[tradeCoin.cgId]?.usd_24h_change || 0;
+    const usdcBal = portfolio["USDC"]?.amount || 0;
+    const coinBal = portfolio[tradeCoin.symbol]?.amount || 0;
+    const coinValUSD = coinBal * currentPrice;
+    const maxBuy = usdcBal;
+    const maxSell = coinValUSD;
+    const estCoins = tradeAmount && currentPrice ? Number(tradeAmount) / (orderType==="limit"?Number(limitPrice)||currentPrice:currentPrice) : 0;
+    const execPrice = orderType==="limit" ? Number(limitPrice)||currentPrice : currentPrice;
+
+    return (
+      <div style={{...appStyle,paddingBottom:40}}><style>{GOOGLE_FONTS}</style>
+        <div style={{...hdrStyle,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+          <button style={backBtnStyle} onClick={()=>{setScreen(S.MAIN);setTradeResult(null);setTradeError("");}}>←</button>
+          <CoinAvatar coin={tradeCoin} size={36}/>
+          <div style={{flex:1}}>
+            <h2 style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Trade {tradeCoin.symbol}</h2>
+            <p style={{fontSize:12,color:T.t2,margin:0}}>{usd(currentPrice)} · <span style={{color:change>=0?T.green2:T.red}}>{pct(change)}</span></p>
+          </div>
+          {upholdConnected&&<Pill label="LIVE"/>}
+        </div>
+        <div style={{padding:16}}>
+
+          {/* Coinbase status banner */}
+          <Card style={{marginBottom:14,padding:12,borderColor:CB_LIVE?"rgba(16,185,129,.3)":"rgba(245,158,11,.3)",background:CB_LIVE?"rgba(16,185,129,.06)":"rgba(245,158,11,.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <p style={{fontSize:12,fontWeight:700,color:CB_LIVE?T.green2:T.gold,margin:"0 0 2px"}}>
+                  {CB_LIVE?"🟢 Coinbase Live Trading":"🟡 Coinbase Paper Trading"}
+                </p>
+                <p style={{fontSize:11,color:T.t3,margin:0,lineHeight:1.5}}>
+                  {CB_LIVE?"Orders execute on your real Coinbase account.":"Simulated orders — add API keys to Vercel to go live."}
+                </p>
+              </div>
+              {!CB_LIVE&&<span style={{fontSize:10,color:T.gold2,background:"rgba(245,158,11,.1)",padding:"3px 8px",borderRadius:10,border:"1px solid rgba(245,158,11,.2)",fontWeight:700,whiteSpace:"nowrap",marginLeft:10}}>PAPER</span>}
+              {CB_LIVE&&<span style={{fontSize:10,color:T.green2,background:"rgba(16,185,129,.1)",padding:"3px 8px",borderRadius:10,border:"1px solid rgba(16,185,129,.2)",fontWeight:700,marginLeft:10}}>LIVE</span>}
+            </div>
+          </Card>
+
+          {/* Buy / Sell toggle */}
+          <div style={{display:"flex",gap:0,marginBottom:16,background:T.bg1,borderRadius:T.r3,padding:4,border:`1px solid ${T.b1}`}}>
+            {["buy","sell"].map(m=>(
+              <button key={m} onClick={()=>{setTradeMode(m);setTradeAmount("");setTradeResult(null);setTradeError("");}}
+                style={{flex:1,padding:"10px",borderRadius:T.r3-2,border:"none",cursor:"pointer",fontFamily:FONT_BODY,fontSize:14,fontWeight:700,transition:"all .2s",
+                  background:tradeMode===m?(m==="buy"?"linear-gradient(135deg,#059669,#10B981)":"linear-gradient(135deg,#DC2626,#EF4444)"):"transparent",
+                  color:tradeMode===m?"#fff":T.t3}}>
+                {m==="buy"?"▲ Buy":"▼ Sell"}
+              </button>
+            ))}
+          </div>
+
+          {/* Order type toggle */}
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {["market","limit"].map(t=>(
+              <button key={t} onClick={()=>{setOrderType(t);setTradeResult(null);setTradeError("");}}
+                style={{flex:1,padding:"9px",borderRadius:T.r3,border:`1px solid ${orderType===t?T.accent:T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13,fontWeight:600,
+                  background:orderType===t?"rgba(99,102,241,.15)":T.bg2,color:orderType===t?T.accent2:T.t3,transition:"all .2s"}}>
+                {t==="market"?"⚡ Market":"◎ Limit"}
+              </button>
+            ))}
+          </div>
+
+          {/* Balance info */}
+          <Card style={{marginBottom:14,padding:12,background:"rgba(255,255,255,.03)"}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div>
+                <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>Available USDC</p>
+                <p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color:T.t1,margin:0}}>{usd(usdcBal)}</p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{tradeCoin.symbol} Holdings</p>
+                <p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color:tradeCoin.color,margin:0}}>{fmt(coinBal,6)}<span style={{fontSize:12,color:T.t3,marginLeft:4}}>({usd(coinValUSD)})</span></p>
+              </div>
+            </div>
+          </Card>
+
+          {/* Amount input */}
+          <Card style={{marginBottom:14}}>
+            <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>
+              {tradeMode==="buy"?"Amount to Spend (USDC)":"Amount to Sell (USD value)"}
+            </p>
+            <div style={{position:"relative",marginBottom:8}}>
+              <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:T.t2,fontSize:16,fontWeight:600}}>$</span>
+              <input type="number" value={tradeAmount} onChange={e=>{setTradeAmount(e.target.value);setTradeResult(null);setTradeError("");}}
+                placeholder="0.00" min="0"
+                style={{width:"100%",background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"14px 14px 14px 30px",color:T.t1,fontSize:20,fontFamily:FONT_NUM,fontWeight:700,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+            {/* Quick % buttons */}
+            <div style={{display:"flex",gap:6,marginBottom:orderType==="limit"?14:0}}>
+              {[25,50,75,100].map(p=>(
+                <button key={p} onClick={()=>setTradeAmount(((tradeMode==="buy"?maxBuy:maxSell)*p/100).toFixed(2))}
+                  style={{flex:1,padding:"7px 0",borderRadius:T.r3,border:`1px solid ${T.b1}`,background:T.bg1,color:T.t2,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>
+                  {p}%
+                </button>
+              ))}
+            </div>
+
+            {/* Limit price input */}
+            {orderType==="limit"&&(
+              <>
+                <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8,marginTop:4}}>
+                  {tradeMode==="buy"?"Buy at price (USD)":"Sell at price (USD)"}
+                </p>
+                <div style={{position:"relative"}}>
+                  <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:T.t2,fontSize:16,fontWeight:600}}>$</span>
+                  <input type="number" value={limitPrice} onChange={e=>{setLimitPrice(e.target.value);setTradeResult(null);setTradeError("");}}
+                    placeholder={fmt(currentPrice)} min="0"
+                    style={{width:"100%",background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"12px 14px 12px 30px",color:T.t1,fontSize:16,fontFamily:FONT_NUM,fontWeight:600,outline:"none",boxSizing:"border-box"}}/>
+                </div>
+                <p style={{fontSize:11,color:T.t3,marginTop:6}}>Current price: {usd(currentPrice)} · {limitPrice&&currentPrice?((Number(limitPrice)-currentPrice)/currentPrice*100).toFixed(1):"–"}% from market</p>
+              </>
+            )}
+          </Card>
+
+          {/* Order summary */}
+          {tradeAmount&&Number(tradeAmount)>0&&(
+            <Card style={{marginBottom:14,background:tradeMode==="buy"?"rgba(16,185,129,.05)":"rgba(239,68,68,.05)",borderColor:tradeMode==="buy"?"rgba(16,185,129,.2)":"rgba(239,68,68,.2)"}}>
+              <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Order Summary</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[
+                  ["Type",orderType==="market"?"Market":"Limit",T.t1],
+                  ["Side",tradeMode==="buy"?"Buy":"Sell",tradeMode==="buy"?T.green2:T.red],
+                  ["USD Amount",usd(Number(tradeAmount)||0),T.t1],
+                  [orderType==="limit"?"Limit Price":"Est. Price",usd(execPrice),T.t2],
+                  [`Est. ${tradeCoin.symbol}`,fmt(estCoins,6),tradeCoin.color],
+                  ["Exchange",CB_LIVE?"Coinbase (Live)":"Coinbase (Paper)",CB_LIVE?T.green2:T.gold2],
+                ].map(([l,v,c])=>(
+                  <div key={l}><p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 2px"}}>{l}</p><p style={{fontSize:13,color:c,fontFamily:FONT_NUM,fontWeight:600,margin:0}}>{v}</p></div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Error */}
+          {tradeError&&<Card style={{marginBottom:14,borderColor:"rgba(239,68,68,.3)",background:"rgba(239,68,68,.06)",padding:12}}><p style={{fontSize:13,color:T.red,margin:0}}>⚠️ {tradeError}</p></Card>}
+
+          {/* Result */}
+          {tradeResult&&(
+            <Card style={{marginBottom:14,borderColor:tradeResult.status==="completed"?"rgba(16,185,129,.3)":"rgba(99,102,241,.3)",background:tradeResult.status==="completed"?"rgba(16,185,129,.06)":"rgba(99,102,241,.06)",padding:16,textAlign:"center"}}>
+              <p style={{fontSize:24,margin:"0 0 8px"}}>{tradeResult.status==="completed"?"✅":"⏳"}</p>
+              {tradeResult.status==="completed"?(
+                <>
+                  <p style={{fontSize:15,fontWeight:700,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>{tradeResult.mode==="buy"?"Purchase Complete!":"Sale Complete!"}</p>
+                  <p style={{fontSize:13,color:T.t2,margin:0}}>{tradeResult.mode==="buy"?`Bought ${fmt(tradeResult.coinAmt,6)} ${tradeCoin.symbol} at ${usd(tradeResult.price)}`:`Sold ${usd(tradeResult.usdAmt)} of ${tradeCoin.symbol} at ${usd(tradeResult.price)}`}</p>
+                </>
+              ):(
+                <>
+                  <p style={{fontSize:15,fontWeight:700,color:T.accent2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>Limit Order Placed</p>
+                  <p style={{fontSize:13,color:T.t2,margin:0}}>{tradeResult.mode==="buy"?"Buy":"Sell"} {usd(tradeResult.usdAmt)} of {tradeCoin.symbol} when price hits {usd(tradeResult.limitPrice)}</p>
+                </>
+              )}
+            </Card>
+          )}
+
+          {/* Submit button */}
+          {!tradeResult&&(
+            <Btn
+              variant={tradeMode==="buy"?"success":"danger"}
+              onClick={executeTradeOrder}
+              disabled={tradeBusy||!tradeAmount}>
+              {tradeBusy?<span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>◈</span>:null}
+              {tradeBusy?"Processing...":`${orderType==="limit"?"Place Limit Order":tradeMode==="buy"?"Buy":"Sell"} ${tradeCoin.symbol}`}
+            </Btn>
+          )}
+          {tradeResult&&<Btn variant="secondary" onClick={()=>{setTradeResult(null);setTradeAmount("");setTradeError("");}}>Place Another Order</Btn>}
+
+          {!CB_LIVE&&<p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:10,lineHeight:1.6}}>Add Coinbase API keys to Vercel env vars and redeploy to enable live trading.</p>}
+          {<p style={{fontSize:11,color:CB_LIVE?T.green2:T.gold2,textAlign:"center",marginTop:10,lineHeight:1.6}}>{CB_LIVE?"🟢 Live trading via Coinbase Advanced Trade":"🟡 Paper mode — set REACT_APP_COINBASE_LIVE=true in Vercel to go live"}</p>}
+
+          {/* Open limit orders */}
+          {openOrders.filter(o=>o.coin===tradeCoin.symbol&&o.status==="pending").length>0&&(
+            <div style={{marginTop:20}}>
+              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Open Limit Orders</p>
+              {openOrders.filter(o=>o.coin===tradeCoin.symbol&&o.status==="pending").map(o=>(
+                <Card key={o.id} style={{marginBottom:10,borderLeft:`3px solid ${o.mode==="buy"?T.green:T.red}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <p style={{fontSize:13,fontWeight:700,color:o.mode==="buy"?T.green2:T.red,margin:"0 0 2px"}}>{o.mode==="buy"?"▲ Buy":"▼ Sell"} · Limit @ {usd(o.limitPrice)}</p>
+                      <p style={{fontSize:12,color:T.t2,margin:0}}>{usd(o.usdAmt)} · {ago(o.time)}</p>
+                    </div>
+                    <button onClick={()=>cancelOrder(o.id)} style={{padding:"6px 12px",borderRadius:T.r3,border:`1px solid rgba(239,68,68,.3)`,background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>Cancel</button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONNECT WALLET
@@ -1021,6 +1353,14 @@ export default function SignalPulsePro() {
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Market Data</p>
           <p style={{fontSize:14,color:T.t1,margin:0}}>CoinGecko · Live · Refreshes every 45s</p>
         </Card>
+        <Card style={{marginBottom:12}}>
+          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Trading Engine</p>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <p style={{fontSize:14,color:T.t1,margin:0}}>Coinbase Advanced Trade</p>
+            <span style={{fontSize:11,fontWeight:700,color:CB_LIVE?T.green2:T.gold2,background:CB_LIVE?"rgba(16,185,129,.1)":"rgba(245,158,11,.1)",padding:"3px 9px",borderRadius:10,border:`1px solid ${CB_LIVE?"rgba(16,185,129,.2)":"rgba(245,158,11,.2)"}`}}>{CB_LIVE?"LIVE":"PAPER"}</span>
+          </div>
+          {!CB_LIVE&&<p style={{fontSize:11,color:T.t3,margin:"6px 0 0",lineHeight:1.5}}>Add COINBASE_API_KEY + COINBASE_API_SECRET to Vercel env vars, then set REACT_APP_COINBASE_LIVE=true to enable live trading.</p>}
+        </Card>
         <Card style={{marginBottom:16}}>
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>AI Engine</p>
           <p style={{fontSize:14,color:T.t1,margin:0}}>Claude Sonnet 4 · Real-time analysis</p>
@@ -1141,6 +1481,11 @@ export default function SignalPulsePro() {
                   )}
                   <button onClick={()=>openDeep(coin)} style={{flex:1,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.25)`,background:"rgba(99,102,241,.08)",color:T.accent2,fontSize:13,fontWeight:600}}>AI ▸</button>
                 </div>
+                {/* Quick trade buttons */}
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <button onClick={()=>openTrade(coin,"buy")} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(16,185,129,.3)`,background:"rgba(16,185,129,.08)",color:T.green2,fontSize:12,fontWeight:700}}>▲ Buy</button>
+                  <button onClick={()=>openTrade(coin,"sell")} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(239,68,68,.3)`,background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:700}}>▼ Sell</button>
+                </div>
               </Card>
             );
           })}
@@ -1239,6 +1584,20 @@ export default function SignalPulsePro() {
           {tab==="log"&&(
             <div>
               <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>Trade History · {tradeLog.length} trades</p>
+              {openOrders.filter(o=>o.status==="pending").length>0&&(
+                <Card style={{marginBottom:14,borderColor:"rgba(99,102,241,.25)",background:"rgba(99,102,241,.06)"}}>
+                  <p style={{fontSize:11,color:T.accent2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>⏳ Open Limit Orders ({openOrders.filter(o=>o.status==="pending").length})</p>
+                  {openOrders.filter(o=>o.status==="pending").map(o=>(
+                    <div key={o.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,padding:"8px 10px",background:"rgba(255,255,255,.03)",borderRadius:T.r3,borderLeft:`2px solid ${o.mode==="buy"?T.green:T.red}`}}>
+                      <div>
+                        <p style={{fontSize:12,fontWeight:700,color:o.mode==="buy"?T.green2:T.red,margin:"0 0 2px"}}>{o.mode==="buy"?"▲ Buy":"▼ Sell"} {o.coin} @ {usd(o.limitPrice)}</p>
+                        <p style={{fontSize:11,color:T.t3,margin:0}}>{usd(o.usdAmt)} · {ago(o.time)}</p>
+                      </div>
+                      <button onClick={()=>cancelOrder(o.id)} style={{padding:"5px 10px",borderRadius:T.r3,border:`1px solid rgba(239,68,68,.3)`,background:"rgba(239,68,68,.08)",color:T.red,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:FONT_BODY}}>Cancel</button>
+                    </div>
+                  ))}
+                </Card>
+              )}
               {tradeLog.length===0&&(
                 <Card style={{textAlign:"center",padding:"50px 20px"}}>
                   <p style={{fontSize:32,marginBottom:12}}>📊</p>
@@ -1247,13 +1606,27 @@ export default function SignalPulsePro() {
                 </Card>
               )}
               {tradeLog.map(t=>(
-                <Card key={t.id} style={{marginBottom:10,borderLeft:`3px solid ${T.accent}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={{color:T.accent2,fontWeight:700,fontSize:14,fontFamily:FONT_DISPLAY}}>⇄ {t.from} → {t.to}</span>
+                <Card key={t.id} style={{marginBottom:10,borderLeft:`3px solid ${t.type==="market"||t.type==="limit"?(t.mode==="buy"?T.green:T.red):T.accent}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      {t.type==="market"||t.type==="limit"?(
+                        <span style={{fontWeight:700,fontSize:14,color:t.mode==="buy"?T.green2:T.red}}>{t.mode==="buy"?"▲ Buy":"▼ Sell"} {t.coin}</span>
+                      ):(
+                        <span style={{color:T.accent2,fontWeight:700,fontSize:14,fontFamily:FONT_DISPLAY}}>⇄ {t.from} → {t.to}</span>
+                      )}
+                      {t.type&&<span style={{fontSize:10,color:T.t3,background:"rgba(255,255,255,.05)",padding:"2px 7px",borderRadius:10,border:`1px solid ${T.b1}`,fontWeight:600,textTransform:"uppercase"}}>{t.type}</span>}
+                      {t.status&&<span style={{fontSize:10,color:t.status==="completed"?T.green2:t.status==="pending"?T.gold2:T.t3,fontWeight:600}}>{t.status}</span>}
+                    </div>
                     <span style={{fontSize:11,color:T.t3}}>{ago(t.time)}</span>
                   </div>
-                  <p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{t.pivotPct}% · {usd(t.pivotUSD)} → {t.to} @ {usd(t.toPrice)}</p>
-                  <p style={{fontSize:12,color:T.t3,margin:0}}>Remainder {100-t.pivotPct}% → {t.remDest}</p>
+                  {t.type==="market"||t.type==="limit"?(
+                    <p style={{fontSize:13,color:T.t2,margin:0}}>{usd(t.usdAmt)} {t.type==="limit"?`@ limit ${usd(t.limitPrice)}`:`@ ${usd(t.price)}`}</p>
+                  ):(
+                    <>
+                      <p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{t.pivotPct}% · {usd(t.pivotUSD)} → {t.to} @ {usd(t.toPrice)}</p>
+                      <p style={{fontSize:12,color:T.t3,margin:0}}>Remainder {100-t.pivotPct}% → {t.remDest}</p>
+                    </>
+                  )}
                 </Card>
               ))}
             </div>
