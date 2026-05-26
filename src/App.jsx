@@ -372,6 +372,7 @@ export default function SignalPulsePro(){
   const [deepCoin,setDeepCoin]=useState(null);
   const [deepData,setDeepData]=useState({});
   const [deepBusy,setDeepBusy]=useState({});
+  const [openTip,setOpenTip]=useState(null);
   const [adminUsers,setAdminUsers]=useState([]);
   const [taxYear,setTaxYear]=useState(new Date().getFullYear());
   const [marketData,setMarketData]=useState([]);
@@ -1355,7 +1356,6 @@ export default function SignalPulsePro(){
               "Stop Loss":{desc:"The price at which you should consider selling to limit your losses if the trade goes against you. Protects your capital.",color:T.red,val:da.stopLoss},
               Resistance:{desc:"A price level where selling pressure historically prevents the coin from rising further. Acts as a ceiling.",color:T.accent2,val:da.keyLevels?.resistance},
             };
-            const [openTip,setOpenTip]=React.useState(null);
             const order=["Target","Support","Stop Loss","Resistance"];
             return(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
