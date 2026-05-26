@@ -32,7 +32,7 @@ const S = {
   PAYWALL:"paywall", MAIN:"main", PIVOT:"pivot", DEEP:"deep",
   SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect", TRADE:"trade", HELP:"help"
 };
-const SUPPORT_EMAIL = "support@signalpulsepro.com";
+const SUPPORT_EMAIL = "support@signalpulsepro.com"; // ← emails go here — set up forwarding at your domain registrar or use Gmail with custom domain
 const PAYPAL_CLIENT_ID = "AdVv-0ZR2G304r2BujEU2m_UZQsPrh7NTEiuWcNTlDvRsAUdQpeoVzBZXIj59hMn6xMrdcAdgmKhiFBk";
 const PAYPAL_PLAN_ID   = "P-4H459901CX116533FNIKEHRY";
 
@@ -357,8 +357,9 @@ export default function SignalPulsePro(){
   const [chartData,setChartData]=useState([]);
   const [chartFrame,setChartFrame]=useState("24H");
   const [chartLoading,setChartLoading]=useState(false);
-  const [favorites,setFavorites]=useState(()=>{try{return JSON.parse(localStorage.getItem("sp_favorites")||"[]");}catch(_){return [];}});
+  const [favorites,setFavorites]=useState([]);
   const [marketFilter,setMarketFilter]=useState("all");
+  const [signalFilter,setSignalFilter]=useState("all");
   const [pushEnabled,setPushEnabled]=useState(false);
   const [trialDaysLeft,setTrialDaysLeft]=useState(30);
   const [searchQuery,setSearchQuery]=useState("");
@@ -380,9 +381,12 @@ export default function SignalPulsePro(){
   const [logoTapTimer,setLogoTapTimer]=useState(null);
 
   useEffect(()=>{
-  // Track page visit
+  // Track page visit with device type
   const visits = parseInt(localStorage.getItem("sp_visits")||"0")+1;
   localStorage.setItem("sp_visits", visits.toString());
+  const isMobileVisit=/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  const mobileVisits=parseInt(localStorage.getItem("sp_visits_mobile")||"0")+(isMobileVisit?1:0);
+  if(isMobileVisit) localStorage.setItem("sp_visits_mobile",mobileVisits.toString());
   const today = new Date().toDateString();
   const visitLog = JSON.parse(localStorage.getItem("sp_visit_log")||"[]");
   visitLog.push(today);
@@ -395,8 +399,22 @@ export default function SignalPulsePro(){
     const storedUser=users.find(x=>x.email===sess.email);
     const merged={...(storedUser||{}), ...sess};
     if(merged.email){
+      // Check if trial has expired — lock them out to paywall
+      if(merged.trial && merged.trialStart){
+        const daysLeft=getTrialDaysLeft(merged.trialStart);
+        setTrialDaysLeft(daysLeft);
+        if(daysLeft===0){
+          // Trial expired — revoke access
+          merged.subscribed=false; merged.trial=false;
+          const idx=users.findIndex(x=>x.email===merged.email);
+          if(idx>=0){users[idx].subscribed=false;users[idx].trial=false;saveUsers(users);}
+          saveSession(merged);
+          setUser(merged);
+          setTimeout(()=>setScreen(S.PAYWALL),2000);
+          return;
+        }
+      }
       setUser(merged);
-      if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
       setTimeout(()=>setScreen(merged.subscribed?S.MAIN:S.PAYWALL),2000);
       return;
     }
@@ -434,9 +452,26 @@ export default function SignalPulsePro(){
   const loadMarketData=useCallback(async()=>{setMarketLoading(true);try{const data=await fetchCGMarketData();setMarketData(data);}catch(_){}setMarketLoading(false);},[]);
   useEffect(()=>{if(tab==="market")loadMarketData();},[tab,loadMarketData]);
   useEffect(()=>{if(!chartCoin)return;setChartLoading(true);setChartData([]);fetchCGChart(chartCoin.cgId,chartFrame).then(d=>setChartData(d)).catch(()=>setChartData([])).finally(()=>setChartLoading(false));},[chartCoin,chartFrame]);
-  const toggleFavorite=(symbol)=>{setFavorites(prev=>{const n=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];localStorage.setItem("sp_favorites",JSON.stringify(n));return n;});};
-  const enablePush=async()=>{if(!("Notification" in window)){alert("Push not supported.");return;}const perm=await Notification.requestPermission();if(perm==="granted"){setPushEnabled(true);localStorage.setItem("sp_push","true");new Notification("SignalPulse Pro",{body:"Push enabled!",icon:"/favicon.ico"});}};
-  useEffect(()=>{const s=localStorage.getItem("sp_push")==="true";if(s&&Notification.permission==="granted")setPushEnabled(true);},[]);
+  const favKey=(u)=>"sp_fav_"+(u?.id||"guest");
+  const toggleFavorite=(symbol)=>{setFavorites(prev=>{const n=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];localStorage.setItem(favKey(user),JSON.stringify(n));return n;});};
+  const loadUserFavorites=(u)=>{try{return JSON.parse(localStorage.getItem(favKey(u))||localStorage.getItem("sp_favorites")||"[]");}catch(_){return [];}};
+  useEffect(()=>{if(user)setFavorites(loadUserFavorites(user));},[user?.id]);
+  const enablePush=async()=>{
+    if(!("Notification" in window)){alert("Push not supported.");return;}
+    const perm=await Notification.requestPermission();
+    if(perm==="granted"){
+      setPushEnabled(true);
+      const pushKey="sp_push_"+(user?.id||"guest");
+      localStorage.setItem(pushKey,"true");
+      new Notification("SignalPulse Pro",{body:"Push alerts enabled for your account!",icon:"/favicon.ico"});
+    }
+  };
+  useEffect(()=>{
+    if(!user) return;
+    const pushKey="sp_push_"+(user.id||"guest");
+    const s=localStorage.getItem(pushKey)==="true"||localStorage.getItem("sp_push")==="true";
+    if(s&&Notification.permission==="granted")setPushEnabled(true);
+  },[user?.id]);
   useEffect(()=>{if(!pushEnabled||Notification.permission!=="granted")return;Object.entries(signals).forEach(([sym,sig])=>{if((sig.action==="BUY"||sig.action==="EXIT")&&favorites.includes(sym))new Notification(`${sig.action}: ${sym}`,{body:sig.reason,icon:"/favicon.ico"});});},[signals,pushEnabled]);
 
   const portfolioUSD=Object.entries(portfolio).reduce((s,[sym,h])=>{if(["USDC","USDT","DAI"].includes(sym))return s+h.amount;const c=COINS.find(x=>x.symbol===sym);const p=c?prices[c.cgId]?.usd:0;return s+(p?h.amount*p:0);},0);
@@ -459,12 +494,19 @@ export default function SignalPulsePro(){
   setAuthBusy(true);setAuthErr("");
   try{
     const u=await signInUser(authEmail.toLowerCase(),authPass);
-    const sess=loadSession();
-    const merged={...u,subscribed:sess?.subscribed??u.subscribed,trial:sess?.trial||u.trial||false,trialStart:sess?.trialStart||u.trialStart||null};
+    // Always use stored user data as source of truth
+    const users=getUsers();
+    const storedUser=users.find(x=>x.email===u.email)||u;
+    const merged={...storedUser};
     saveSession(merged);
     localStorage.setItem("sp_last_email",authEmail.toLowerCase());
-    if(merged.trial&&merged.trialStart) setTrialDaysLeft(getTrialDaysLeft(merged.trialStart));
+    if(merged.trial&&merged.trialStart){
+      const daysLeft=getTrialDaysLeft(merged.trialStart);
+      setTrialDaysLeft(daysLeft);
+      if(daysLeft===0){merged.subscribed=false;merged.trial=false;}
+    }
     setUser(merged);
+    setFavorites(loadUserFavorites(merged));
     setScreen(merged.subscribed||isOwner?S.MAIN:S.PAYWALL);
   }catch(e){setAuthErr(e.message);}
   setAuthBusy(false);
@@ -666,7 +708,14 @@ export default function SignalPulsePro(){
                   // ── METAMASK / COINBASE WALLET / TRUST (window.ethereum) ──
                   if(w.id==="metamask"||w.id==="coinbase"||w.id==="trust"){
                     if(!window.ethereum){
-                      alert(`${w.name} is not installed. Install the ${w.name} browser extension or app, then try again.`);
+                      // Mobile deep-link fallback
+                      const isMobile=/iPhone|iPad|Android/i.test(navigator.userAgent);
+                      if(isMobile){
+                        const links={metamask:"https://metamask.app.link/dapp/"+window.location.host,coinbase:"https://go.cb-w.com/dapp?cb_url="+encodeURIComponent(window.location.href),trust:"https://link.trustwallet.com/open_url?coin_id=60&url="+encodeURIComponent(window.location.href)};
+                        if(window.confirm(w.name+" not detected. Open "+w.name+" app to connect?")){window.location.href=links[w.id]||links.metamask;}
+                      } else {
+                        alert(w.name+" is not installed. Install the "+w.name+" browser extension, then refresh this page.");
+                      }
                       return;
                     }
                     try{
@@ -1286,7 +1335,7 @@ export default function SignalPulsePro(){
       </Card>
       <Card style={{marginBottom:12}}>
         <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>🔔 Notifications</p>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.b1}`}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>Browser Push</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Desktop & mobile browser alerts</p></div><button onClick={async()=>{if(pushEnabled){setPushEnabled(false);localStorage.removeItem("sp_push");return;}if(!("Notification" in window)){alert("Push not supported.");return;}const perm=await Notification.requestPermission();if(perm==="granted"){setPushEnabled(true);localStorage.setItem("sp_push","true");new Notification("SignalPulse Pro",{body:"Push alerts enabled!",icon:"/favicon.ico"});}}} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.4)":T.b1}`,background:pushEnabled?"rgba(16,185,129,.12)":T.bg1,color:pushEnabled?T.green2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{pushEnabled?"ON ✓":"OFF"}</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.b1}`}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>Browser Push</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Desktop & mobile browser alerts</p></div><button onClick={async()=>{if(pushEnabled){const pk="sp_push_"+(user?.id||"guest");setPushEnabled(false);localStorage.removeItem(pk);localStorage.removeItem("sp_push");return;}if(!("Notification" in window)){alert("Push not supported.");return;}const perm=await Notification.requestPermission();if(perm==="granted"){const pk="sp_push_"+(user?.id||"guest");setPushEnabled(true);localStorage.setItem(pk,"true");new Notification("SignalPulse Pro",{body:"Push alerts enabled!",icon:"/favicon.ico"});}}} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.4)":T.b1}`,background:pushEnabled?"rgba(16,185,129,.12)":T.bg1,color:pushEnabled?T.green2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{pushEnabled?"ON ✓":"OFF"}</button></div>
         <div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:smsEnabled?10:0}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>📱 SMS Alerts</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Text alerts to your cell phone</p></div><button onClick={()=>setSmsEnabled(p=>!p)} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${smsEnabled?"rgba(99,102,241,.4)":T.b1}`,background:smsEnabled?"rgba(99,102,241,.12)":T.bg1,color:smsEnabled?T.accent2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{smsEnabled?"ON ✓":"OFF"}</button></div>{smsEnabled&&(<div style={{marginTop:8}}><p style={{fontSize:12,color:T.t2,marginBottom:8}}>Enter your phone number to receive BUY/EXIT alerts via SMS.</p><div style={{display:"flex",gap:8}}><input value={phoneNumber} onChange={e=>setPhoneNumber(e.target.value)} placeholder="+1 (555) 000-0000" type="tel" style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/><button onClick={()=>{if(phoneNumber.length>6){alert("SMS alerts set up for "+phoneNumber);}}} style={{padding:"10px 14px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13,whiteSpace:"nowrap"}}>Save</button></div><p style={{fontSize:11,color:T.t3,marginTop:6,lineHeight:1.5}}>Alerts fire for coins in your ★ Favorites.</p></div>)}</div>
       </Card>
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p><p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>{isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}</p>{user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}{!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}{user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}</Card>
@@ -1332,15 +1381,26 @@ export default function SignalPulsePro(){
           </div>
           <div style={{display:"flex",borderBottom:`1px solid ${T.b2}`}}>
             {[["signals","Signals"],["market","Market"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"],["tax","Tax"]].map(([id,lbl])=>(
-              <button key={id} onClick={()=>{setTab(id);if(id==="alerts")markRead();}} style={{flex:1,padding:"10px 0 12px",fontSize:11,fontWeight:600,fontFamily:FONT_BODY,border:"none",background:"none",cursor:"pointer",transition:"all .2s",color:tab===id?T.accent2:T.t3,borderBottom:`2px solid ${tab===id?T.accent:"transparent"}`,marginBottom:-1}}>{lbl}</button>
+              <button key={id} onClick={()=>{setTab(id);if(id==="alerts")markRead();}} style={{flex:1,padding:"10px 0 12px",fontSize:11,fontWeight:700,fontFamily:FONT_BODY,border:"none",cursor:"pointer",transition:"all .2s",color:tab===id?"#fff":T.t2,background:tab===id?"rgba(99,102,241,.25)":"none",borderBottom:`2px solid ${tab===id?T.accent:"transparent"}`,marginBottom:-1,borderRadius:tab===id?"6px 6px 0 0":"0"}}>{lbl}</button>
             ))}
           </div>
         </div>
 
         <div style={{padding:"16px 16px 70px"}}>
+          {tab==="signals"&&(<div style={{display:"flex",gap:6,marginBottom:10}}>
+            {[["all","All Signals"],["favorites","★ My Favorites"],["buy","🟢 BUY"],["exit","🔴 EXIT"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setSignalFilter(v)} style={{padding:"5px 10px",borderRadius:16,border:`1px solid ${signalFilter===v?T.accent:T.b1}`,cursor:"pointer",fontFamily:FONT_BODY,fontSize:11,fontWeight:600,background:signalFilter===v?"rgba(99,102,241,.2)":T.bg2,color:signalFilter===v?T.accent2:T.t2,whiteSpace:"nowrap"}}>{l}</button>
+            ))}
+          </div>)}
           {(tab==="signals"||tab==="market")&&(<div style={{position:"relative",marginBottom:14}}><span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:T.t3,pointerEvents:"none"}}>🔍</span><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder={`Search ${tab==="signals"?"coins, signals":"coins, prices"}...`} style={{width:"100%",background:T.bg2,border:`1px solid ${searchQuery?T.accent:T.b1}`,borderRadius:T.r3,padding:"11px 36px 11px 38px",color:T.t1,fontSize:14,fontFamily:FONT_BODY,outline:"none",boxSizing:"border-box",transition:"all .2s"}}/>{searchQuery&&<button onClick={()=>setSearchQuery("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.t3,fontSize:18,cursor:"pointer",lineHeight:1,padding:"2px 6px"}}>×</button>}</div>)}
 
-          {tab==="signals"&&[...COINS].filter(coin=>!searchQuery||coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())||coin.name.toLowerCase().includes(searchQuery.toLowerCase())||(signals[coin.symbol]?.action||"").toLowerCase().includes(searchQuery.toLowerCase()))
+          {tab==="signals"&&[...COINS].filter(coin=>{
+              if(signalFilter==="favorites"&&!favorites.includes(coin.symbol))return false;
+              if(signalFilter==="buy"&&signals[coin.symbol]?.action!=="BUY")return false;
+              if(signalFilter==="exit"&&signals[coin.symbol]?.action!=="EXIT")return false;
+              if(searchQuery&&!coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())&&!coin.name.toLowerCase().includes(searchQuery.toLowerCase())&&!(signals[coin.symbol]?.action||"").toLowerCase().includes(searchQuery.toLowerCase()))return false;
+              return true;
+            })
             .sort((a,b)=>{
               const aHeld=(portfolio[a.symbol]?.amount||0)>0;
               const bHeld=(portfolio[b.symbol]?.amount||0)>0;
@@ -1403,7 +1463,10 @@ export default function SignalPulsePro(){
           </div>)}
 
           {tab==="alerts"&&(<div>
-            <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>Live Alerts · {notes.length} total</p>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>Live Alerts · {notes.length} total</p>
+              {notes.length>0&&<button onClick={()=>{setNotes([]);setUnread(0);}} style={{fontSize:11,color:T.red,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",borderRadius:T.r3,padding:"4px 12px",cursor:"pointer",fontFamily:FONT_BODY,fontWeight:600}}>Clear All</button>}
+            </div>
             {notes.length===0&&(<Card style={{textAlign:"center",padding:"50px 20px"}}><p style={{fontSize:32,marginBottom:12}}>📡</p><p style={{fontSize:15,fontWeight:600,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 6px"}}>Scanning markets</p><p style={{fontSize:13,color:T.t2,margin:0}}>Buy and Exit signals will appear here automatically.</p></Card>)}
             {notes.map(n=>(<Card key={n.id} style={{marginBottom:10,borderLeft:`3px solid ${n.coinColor}`,opacity:n.read?.65:1}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div style={{display:"flex",gap:8,alignItems:"center"}}><span style={{fontWeight:700,color:n.coinColor,fontSize:14,fontFamily:FONT_DISPLAY}}>{n.coin}</span><Pill label={n.action}/></div><span style={{fontSize:11,color:T.t3}}>{ago(n.time)}</span></div><p style={{fontSize:13,color:T.t2,lineHeight:1.5,margin:"0 0 6px"}}>{n.reason}</p><div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:T.t3}}><span>{usd(n.price)}</span><span>{pct(n.change)} · {n.confidence}% confidence</span></div>{n.action==="EXIT"&&(<button onClick={()=>openPivot(n.coin)} style={{width:"100%",marginTop:10,padding:"9px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(239,68,68,.25)`,background:"rgba(239,68,68,.08)",color:T.red,fontSize:13,fontWeight:600}}>Open Pivot Advisor →</button>)}</Card>))}
           </div>)}
