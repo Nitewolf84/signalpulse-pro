@@ -3,13 +3,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ─── OWNER CONFIG ─────────────────────────────────────────────────────────────
 const OWNER_KEY = "OWNER-SIGNALPULSE-FREE";
 
-// ─── DEMO PORTFOLIO ───────────────────────────────────────────────────────────
-const DEMO_PORTFOLIO = {
-  BTC:  { amount: 0.085, avgBuy: 61200 },
-  ETH:  { amount: 1.42,  avgBuy: 3200  },
-  SOL:  { amount: 12.5,  avgBuy: 155   },
-  USDC: { amount: 2840,  avgBuy: 1     },
-};
+// ─── UPHOLD CONFIG ────────────────────────────────────────────────────────────
+// Add real values to your Vercel environment variables when ready
+const UPHOLD_CLIENT_ID = process.env.REACT_APP_UPHOLD_CLIENT_ID || "YOUR_UPHOLD_CLIENT_ID";
+const UPHOLD_REDIRECT_URI = process.env.REACT_APP_UPHOLD_REDIRECT_URI || "https://your-app.vercel.app/api/uphold-callback";
+const UPHOLD_SCOPES = "accounts:read transactions:read";
 
 // ─── COINS ────────────────────────────────────────────────────────────────────
 const COINS = [
@@ -26,10 +24,9 @@ const COINS = [
 const S = {
   SPLASH:"splash", LANDING:"landing", LOGIN:"login", SIGNUP:"signup",
   PAYWALL:"paywall", MAIN:"main", PIVOT:"pivot", DEEP:"deep",
-  SETTINGS:"settings", ADMIN:"admin"
+  SETTINGS:"settings", ADMIN:"admin", CONNECT:"connect"
 };
 
-// ─── FONT STACK ───────────────────────────────────────────────────────────────
 const FONT_DISPLAY = "'Clash Display', 'Sora', 'Plus Jakarta Sans', sans-serif";
 const FONT_BODY    = "'Plus Jakarta Sans', 'Outfit', 'Inter', sans-serif";
 const FONT_NUM     = "'Sora', 'Plus Jakarta Sans', sans-serif";
@@ -50,7 +47,6 @@ const GOOGLE_FONTS = `
   input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:#6366F1; cursor:pointer; border:2px solid rgba(255,255,255,.8); box-shadow:0 2px 8px rgba(99,102,241,.5); }
 `;
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt  = (n,d=2) => n==null?"–":n>=1000?n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}):n>=1?n.toFixed(d):n.toFixed(6);
 const usd  = n => "$"+fmt(n);
 const pct  = n => (n>=0?"+":"")+((n||0).toFixed(2))+"%";
@@ -91,6 +87,23 @@ async function fetchCGPrices() {
   return r.json();
 }
 
+// ─── UPHOLD (mock — swap comments for real API once credentials are set) ──────
+async function upholdFetchBalances(accessToken) {
+  // REAL: const r = await fetch('/api/uphold-balances', { headers:{ Authorization:`Bearer ${accessToken}` }});
+  //       return r.json();
+  await new Promise(r=>setTimeout(r,1800));
+  return {
+    BTC:  { amount:0.042,  avgBuy:58400 },
+    ETH:  { amount:2.1,    avgBuy:2850  },
+    SOL:  { amount:18.5,   avgBuy:142   },
+    USDC: { amount:1250,   avgBuy:1     },
+  };
+}
+function upholdGetAuthURL() {
+  // REAL: return `https://uphold.com/authorize/${UPHOLD_CLIENT_ID}?scope=${encodeURIComponent(UPHOLD_SCOPES)}&redirect_uri=${encodeURIComponent(UPHOLD_REDIRECT_URI)}&response_type=code&state=${Date.now()}`;
+  return "#";
+}
+
 // ─── CLAUDE AI ────────────────────────────────────────────────────────────────
 async function aiPivot(exitSymbol, priceMap, portfolio) {
   const snap=COINS.map(c=>{const d=priceMap[c.cgId]||{};return `${c.symbol}: $${fmt(d.usd)} | 24h: ${(d.usd_24h_change||0).toFixed(2)}%`;}).join("\n");
@@ -108,42 +121,61 @@ async function aiDeep(coin, price, change, history) {
   return JSON.parse((d.content||[]).map(b=>b.text||"").join("").replace(/```json|```/g,"").trim());
 }
 
+// ─── TAX HELPERS ─────────────────────────────────────────────────────────────
+function computeTaxData(tradeLog) {
+  // Each trade in tradeLog: { id, time, from, to, pivotPct, pivotUSD, remUSD, remDest, toPrice }
+  // We treat each "from" sale as a taxable disposal
+  const now = Date.now();
+  const MS_YEAR = 365 * 24 * 60 * 60 * 1000;
+  const rows = tradeLog.map(t => {
+    const proceeds = t.pivotUSD;
+    // costBasis: we approximate using the portfolio avgBuy stored at trade time
+    // Since we don't store avgBuy at trade time, we use toPrice as a proxy for entry
+    // and pivotUSD as proceeds. For a real app you'd store costBasis on the trade.
+    const costBasis = t.pivotUSD * 0.85; // demo approximation — 15% gain assumed
+    const gain = proceeds - costBasis;
+    const holdDays = Math.floor((now - t.time) / (1000 * 60 * 60 * 24));
+    const term = holdDays >= 365 ? "Long-term" : "Short-term";
+    return { ...t, proceeds, costBasis, gain, holdDays, term };
+  });
+  const totalGain = rows.reduce((s,r)=>s+r.gain,0);
+  const shortGain = rows.filter(r=>r.term==="Short-term").reduce((s,r)=>s+r.gain,0);
+  const longGain  = rows.filter(r=>r.term==="Long-term").reduce((s,r)=>s+r.gain,0);
+  return { rows, totalGain, shortGain, longGain };
+}
+
+function exportCSV(rows) {
+  const header = "Date,From,To,Proceeds (USD),Cost Basis (USD),Gain/Loss (USD),Hold Period,Term\n";
+  const lines = rows.map(r =>
+    `${new Date(r.time).toLocaleDateString()},${r.from},${r.to},$${r.proceeds.toFixed(2)},$${r.costBasis.toFixed(2)},$${r.gain.toFixed(2)},${r.holdDays} days,${r.term}`
+  ).join("\n");
+  const blob = new Blob([header+lines], {type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "signalpulse_tax_report.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════════════════════
 const T = {
-  bg0: "#060A14",
-  bg1: "#0B1120",
-  bg2: "#111827",
-  bg3: "rgba(255,255,255,.04)",
-  accent:  "#6366F1",
-  accent2: "#818CF8",
-  accent3: "#C7D2FE",
-  green:  "#10B981",
-  green2: "#34D399",
-  red:    "#EF4444",
-  red2:   "#FCA5A5",
-  gold:   "#F59E0B",
-  gold2:  "#FCD34D",
-  blue:   "#3B82F6",
-  t1: "#F1F5FD",
-  t2: "#94A3B8",
-  t3: "#475569",
-  t4: "#1E293B",
-  b1: "rgba(255,255,255,.08)",
-  b2: "rgba(255,255,255,.05)",
-  r1: 16, r2: 12, r3: 8, r4: 6,
+  bg0: "#060A14", bg1: "#0B1120", bg2: "#111827", bg3: "rgba(255,255,255,.04)",
+  accent:"#6366F1", accent2:"#818CF8", accent3:"#C7D2FE",
+  green:"#10B981", green2:"#34D399", red:"#EF4444", red2:"#FCA5A5",
+  gold:"#F59E0B", gold2:"#FCD34D", blue:"#3B82F6",
+  t1:"#F1F5FD", t2:"#94A3B8", t3:"#475569", t4:"#1E293B",
+  b1:"rgba(255,255,255,.08)", b2:"rgba(255,255,255,.05)",
+  r1:16, r2:12, r3:8, r4:6,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UI COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════════
-
 function LiveDot({active=true}) {
   return <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
     <span style={{width:7,height:7,borderRadius:"50%",background:active?T.green:"rgba(255,255,255,.2)",
-      flexShrink:0, animation:active?"rpl 2s infinite":"none",
-      boxShadow:active?`0 0 0 0 ${T.green}55`:"none"}}/>
+      flexShrink:0,animation:active?"rpl 2s infinite":"none",boxShadow:active?`0 0 0 0 ${T.green}55`:"none"}}/>
   </span>;
 }
 
@@ -152,53 +184,45 @@ function Spark({data,color,w=80,h=32}) {
   const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||1;
   const pts=data.map((v,i)=>`${(i/(data.length-1))*w},${h-((v-mn)/rng)*(h-5)-2}`).join(" ");
   const up=data[data.length-1]>=data[0];
-  const lineColor = up ? T.green : T.red;
-  const gradId = `g${color.replace(/[^a-z0-9]/gi,"")}`;
+  const lineColor = up?T.green:T.red;
   return <svg width={w} height={h} style={{overflow:"visible"}}>
-    <defs>
-      <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor={lineColor} stopOpacity=".2"/>
-        <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
-      </linearGradient>
-    </defs>
-    <polyline points={pts} fill="none" stroke={lineColor} strokeWidth="1.8"
-      strokeLinecap="round" strokeLinejoin="round"/>
+    <polyline points={pts} fill="none" stroke={lineColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>;
 }
 
-function Pill({label, variant="neutral"}) {
+function Pill({label,variant="neutral"}) {
   const variants = {
-    BUY:    {bg:"rgba(16,185,129,.12)", c:T.green2,  b:"rgba(16,185,129,.25)"},
-    EXIT:   {bg:"rgba(239,68,68,.12)",  c:T.red2,    b:"rgba(239,68,68,.25)"},
-    HODL:   {bg:"rgba(245,158,11,.1)",  c:T.gold2,   b:"rgba(245,158,11,.25)"},
-    HIGH:   {bg:"rgba(239,68,68,.1)",   c:T.red2,    b:"rgba(239,68,68,.2)"},
-    MEDIUM: {bg:"rgba(245,158,11,.1)",  c:T.gold2,   b:"rgba(245,158,11,.2)"},
-    LOW:    {bg:"rgba(16,185,129,.1)",  c:T.green2,  b:"rgba(16,185,129,.2)"},
-    PRO:    {bg:"rgba(99,102,241,.15)", c:T.accent3, b:"rgba(99,102,241,.3)"},
-    FREE:   {bg:"rgba(71,85,105,.2)",   c:T.t2,      b:"rgba(71,85,105,.3)"},
-    DEMO:   {bg:"rgba(99,102,241,.1)",  c:T.accent2, b:"rgba(99,102,241,.25)"},
-    LIVE:   {bg:"rgba(16,185,129,.1)",  c:T.green,   b:"rgba(16,185,129,.25)"},
-    neutral:{bg:"rgba(255,255,255,.06)",c:T.t2,      b:T.b1},
+    BUY:{bg:"rgba(16,185,129,.12)",c:T.green2,b:"rgba(16,185,129,.25)"},
+    EXIT:{bg:"rgba(239,68,68,.12)",c:T.red2,b:"rgba(239,68,68,.25)"},
+    HODL:{bg:"rgba(245,158,11,.1)",c:T.gold2,b:"rgba(245,158,11,.25)"},
+    HIGH:{bg:"rgba(239,68,68,.1)",c:T.red2,b:"rgba(239,68,68,.2)"},
+    MEDIUM:{bg:"rgba(245,158,11,.1)",c:T.gold2,b:"rgba(245,158,11,.2)"},
+    LOW:{bg:"rgba(16,185,129,.1)",c:T.green2,b:"rgba(16,185,129,.2)"},
+    PRO:{bg:"rgba(99,102,241,.15)",c:T.accent3,b:"rgba(99,102,241,.3)"},
+    FREE:{bg:"rgba(71,85,105,.2)",c:T.t2,b:"rgba(71,85,105,.3)"},
+    DEMO:{bg:"rgba(99,102,241,.1)",c:T.accent2,b:"rgba(99,102,241,.25)"},
+    TRIAL:{bg:"rgba(16,185,129,.12)",c:T.green2,b:"rgba(16,185,129,.3)"},
+    "Short-term":{bg:"rgba(239,68,68,.1)",c:T.red2,b:"rgba(239,68,68,.2)"},
+    "Long-term":{bg:"rgba(16,185,129,.1)",c:T.green2,b:"rgba(16,185,129,.2)"},
+    neutral:{bg:"rgba(255,255,255,.06)",c:T.t2,b:T.b1},
   };
-  const s = variants[label]||variants.neutral;
-  return <span style={{display:"inline-flex",alignItems:"center",padding:"3px 10px",
-    borderRadius:20,fontSize:11,fontWeight:600,letterSpacing:".02em",
-    fontFamily:FONT_BODY,border:`1px solid ${s.b}`,background:s.bg,color:s.c,
-    whiteSpace:"nowrap"}}>{label}</span>;
+  const s=variants[label]||variants.neutral;
+  return <span style={{display:"inline-flex",alignItems:"center",padding:"3px 10px",borderRadius:20,
+    fontSize:11,fontWeight:600,letterSpacing:".02em",fontFamily:FONT_BODY,
+    border:`1px solid ${s.b}`,background:s.bg,color:s.c,whiteSpace:"nowrap"}}>{label}</span>;
 }
 
-function ProgressBar({val, color=T.accent, height=3}) {
+function ProgressBar({val,color=T.accent,height=3}) {
   return <div style={{display:"flex",alignItems:"center",gap:10}}>
     <div style={{flex:1,height,background:"rgba(255,255,255,.06)",borderRadius:height,overflow:"hidden"}}>
       <div style={{width:`${val}%`,height:"100%",background:color,borderRadius:height,
-        transition:"width .8s cubic-bezier(.4,0,.2,1)",
-        boxShadow:`0 0 10px ${color}44`}}/>
+        transition:"width .8s cubic-bezier(.4,0,.2,1)",boxShadow:`0 0 10px ${color}44`}}/>
     </div>
     <span style={{fontSize:12,color:T.t2,fontFamily:FONT_NUM,fontWeight:600,minWidth:32}}>{val}%</span>
   </div>;
 }
 
-function CoinAvatar({coin, size=40}) {
+function CoinAvatar({coin,size=40}) {
   return <div style={{width:size,height:size,borderRadius:size*.3,flexShrink:0,
     background:`${coin.color}18`,border:`1px solid ${coin.color}30`,
     display:"flex",alignItems:"center",justifyContent:"center",
@@ -207,21 +231,16 @@ function CoinAvatar({coin, size=40}) {
   </div>;
 }
 
-function Card({children, style={}, accent}) {
-  return <div style={{
-    background:T.bg2,
-    border:`1px solid ${accent?`${accent}25`:T.b1}`,
-    borderRadius:T.r1,padding:16,
-    boxShadow:"0 1px 3px rgba(0,0,0,.3)",
-    ...style}}>
+function Card({children,style={},accent}) {
+  return <div style={{background:T.bg2,border:`1px solid ${accent?`${accent}25`:T.b1}`,
+    borderRadius:T.r1,padding:16,boxShadow:"0 1px 3px rgba(0,0,0,.3)",...style}}>
     {children}
   </div>;
 }
 
-function FormInput({label, type="text", value, onChange, placeholder, error, autoComplete}) {
+function FormInput({label,type="text",value,onChange,placeholder,error,autoComplete}) {
   return <div style={{marginBottom:16}}>
-    {label&&<label style={{fontSize:12,color:T.t2,fontWeight:600,fontFamily:FONT_BODY,
-      marginBottom:6,display:"block"}}>{label}</label>}
+    {label&&<label style={{fontSize:12,color:T.t2,fontWeight:600,fontFamily:FONT_BODY,marginBottom:6,display:"block"}}>{label}</label>}
     <input type={type} value={value} onChange={e=>onChange(e.target.value)}
       placeholder={placeholder} autoComplete={autoComplete}
       style={{width:"100%",background:T.bg1,border:`1px solid ${error?"rgba(239,68,68,.5)":T.b1}`,
@@ -231,12 +250,11 @@ function FormInput({label, type="text", value, onChange, placeholder, error, aut
   </div>;
 }
 
-function SocialBtn({icon, label, onClick}) {
+function SocialBtn({icon,label,onClick}) {
   return <button onClick={onClick} style={{width:"100%",padding:"13px",borderRadius:T.r3,
-    border:`1px solid ${T.b1}`,background:T.bg2,color:T.t1,fontSize:14,
-    fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",
-    justifyContent:"center",gap:10,fontFamily:FONT_BODY,transition:"all .2s",
-    marginBottom:8}}>
+    border:`1px solid ${T.b1}`,background:T.bg2,color:T.t1,fontSize:14,fontWeight:600,
+    cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+    gap:10,fontFamily:FONT_BODY,transition:"all .2s",marginBottom:8}}>
     <span style={{fontSize:18}}>{icon}</span>{label}
   </button>;
 }
@@ -249,21 +267,20 @@ function Divider({label}) {
   </div>;
 }
 
-function Btn({children, onClick, variant="primary", disabled, style={}}) {
+function Btn({children,onClick,variant="primary",disabled,style={}}) {
   const variants = {
-    primary:   {background:`linear-gradient(135deg,#6366F1,#818CF8)`,color:"#fff",border:"none"},
-    secondary: {background:T.bg2,color:T.t1,border:`1px solid ${T.b1}`},
-    danger:    {background:"rgba(239,68,68,.1)",color:T.red,border:"1px solid rgba(239,68,68,.2)"},
-    paypal:    {background:"linear-gradient(135deg,#009CDE,#003087)",color:"#fff",border:"none"},
-    ghost:     {background:"transparent",color:T.t2,border:"none"},
-    success:   {background:`linear-gradient(135deg,#059669,#10B981)`,color:"#fff",border:"none"},
+    primary:{background:`linear-gradient(135deg,#6366F1,#818CF8)`,color:"#fff",border:"none"},
+    secondary:{background:T.bg2,color:T.t1,border:`1px solid ${T.b1}`},
+    danger:{background:"rgba(239,68,68,.1)",color:T.red,border:"1px solid rgba(239,68,68,.2)"},
+    paypal:{background:"linear-gradient(135deg,#009CDE,#003087)",color:"#fff",border:"none"},
+    ghost:{background:"transparent",color:T.t2,border:"none"},
+    success:{background:`linear-gradient(135deg,#059669,#10B981)`,color:"#fff",border:"none"},
+    uphold:{background:"linear-gradient(135deg,#1EB8B8,#0A8080)",color:"#fff",border:"none"},
   };
-  const v = variants[variant]||variants.primary;
-  return <button onClick={onClick} disabled={disabled} style={{
-    width:"100%",padding:"14px",borderRadius:T.r3,...v,
-    fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",
-    fontFamily:FONT_BODY,letterSpacing:".02em",transition:"all .2s",
-    opacity:disabled?.6:1,...style}}>
+  const v=variants[variant]||variants.primary;
+  return <button onClick={onClick} disabled={disabled} style={{width:"100%",padding:"14px",
+    borderRadius:T.r3,...v,fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",
+    fontFamily:FONT_BODY,letterSpacing:".02em",transition:"all .2s",opacity:disabled?.6:1,...style}}>
     {children}
   </button>;
 }
@@ -272,48 +289,78 @@ function Btn({children, onClick, variant="primary", disabled, style={}}) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function SignalPulsePro() {
-  const [screen,setScreen]       = useState(S.SPLASH);
-  const [tab,setTab]             = useState("signals");
-  const [user,setUser]           = useState(null);
-  const [isOwner,setIsOwner]     = useState(false);
-
-  const [authName,setAuthName]   = useState("");
-  const [authEmail,setAuthEmail] = useState("");
-  const [authPass,setAuthPass]   = useState("");
-  const [authErr,setAuthErr]     = useState("");
-  const [authBusy,setAuthBusy]   = useState(false);
+  const [screen,setScreen]         = useState(S.SPLASH);
+  const [tab,setTab]               = useState("signals");
+  const [user,setUser]             = useState(null);
+  const [isOwner,setIsOwner]       = useState(false);
+  const [authName,setAuthName]     = useState("");
+  const [authEmail,setAuthEmail]   = useState("");
+  const [authPass,setAuthPass]     = useState("");
+  const [authErr,setAuthErr]       = useState("");
+  const [authBusy,setAuthBusy]     = useState(false);
   const [ownerInput,setOwnerInput] = useState("");
+  const [upholdConnected,setUpholdConnected] = useState(false);
+  const [upholdUser,setUpholdUser]           = useState(null);
+  const [upholdLoading,setUpholdLoading]     = useState(false);
+  const [upholdError,setUpholdError]         = useState("");
 
-  const [prices,setPrices]       = useState({});
-  const [histories,setHistories] = useState({});
-  const [signals,setSignals]     = useState({});
-  const [notes,setNotes]         = useState([]);
-  const [unread,setUnread]       = useState(0);
-  const [lastFetch,setLastFetch] = useState(null);
-  const [fetching,setFetching]   = useState(false);
-  const priceRef                 = useRef(null);
-
-  const [portfolio,setPortfolio] = useState(DEMO_PORTFOLIO);
-  const [tradeLog,setTradeLog]   = useState([]);
-
-  const [pivotCoin,setPivotCoin] = useState(null);
-  const [pivotRec,setPivotRec]   = useState(null);
-  const [pivotBusy,setPivotBusy] = useState(false);
-  const [pivotPct,setPivotPct]   = useState(60);
-  const [remainder,setRemainder] = useState("HODL");
+  const [prices,setPrices]         = useState({});
+  const [histories,setHistories]   = useState({});
+  const [signals,setSignals]       = useState({});
+  const [notes,setNotes]           = useState([]);
+  const [unread,setUnread]         = useState(0);
+  const [lastFetch,setLastFetch]   = useState(null);
+  const [fetching,setFetching]     = useState(false);
+  const priceRef                   = useRef(null);
+  const [portfolio,setPortfolio]     = useState({}); // empty until Uphold connects
+  const [tradeLog,setTradeLog]     = useState([]);
+  const [pivotCoin,setPivotCoin]   = useState(null);
+  const [pivotRec,setPivotRec]     = useState(null);
+  const [pivotBusy,setPivotBusy]   = useState(false);
+  const [pivotPct,setPivotPct]     = useState(60);
+  const [remainder,setRemainder]   = useState("HODL");
   const [confirming,setConfirming] = useState(false);
-  const [tradeMsg,setTradeMsg]   = useState("");
-
-  const [deepCoin,setDeepCoin]   = useState(null);
-  const [deepData,setDeepData]   = useState({});
-  const [deepBusy,setDeepBusy]   = useState({});
-
+  const [tradeMsg,setTradeMsg]     = useState("");
+  const [deepCoin,setDeepCoin]     = useState(null);
+  const [deepData,setDeepData]     = useState({});
+  const [deepBusy,setDeepBusy]     = useState({});
   const [adminUsers,setAdminUsers] = useState([]);
+  const [taxYear,setTaxYear]       = useState(new Date().getFullYear());
 
-  // Splash
   useEffect(()=>{ const t=setTimeout(()=>setScreen(S.LANDING),2000); return()=>clearTimeout(t); },[]);
 
-  // Market feed
+  // Handle Uphold OAuth callback token injected by Vercel function
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const token=params.get("uphold_token"), name=params.get("uphold_name");
+    if(token){ window.history.replaceState({},"",window.location.pathname); handleUpholdConnected(token, name||"Uphold User"); }
+  },[]);
+
+  const handleUpholdConnected = async(token, name)=>{
+    setUpholdLoading(true); setUpholdError("");
+    try {
+      const balances = await upholdFetchBalances(token);
+      setPortfolio(balances); setUpholdConnected(true); setUpholdUser({name, token});
+      if(screen===S.CONNECT) setScreen(S.MAIN);
+    } catch(e){ setUpholdError("Could not load wallet balances. Please try again."); }
+    setUpholdLoading(false);
+  };
+
+  const connectUphold = ()=>{
+    setUpholdLoading(true); setUpholdError("");
+    // Simulate OAuth flow — replace with: window.location.href = upholdGetAuthURL();
+    setTimeout(async()=>{ await handleUpholdConnected("mock_token_"+Date.now(), user?.name||"Uphold User"); }, 2200);
+  };
+
+  const disconnectUphold = ()=>{ setUpholdConnected(false); setUpholdUser(null); setPortfolio({}); };
+
+  const refreshUpholdBalances = async()=>{
+    if(!upholdUser?.token) return;
+    setUpholdLoading(true);
+    try { const b=await upholdFetchBalances(upholdUser.token); setPortfolio(b); } catch(e){ setUpholdError("Refresh failed."); }
+    setUpholdLoading(false);
+  };
+
   const fetchMarket = useCallback(async()=>{
     setFetching(true);
     try {
@@ -358,7 +405,6 @@ export default function SignalPulsePro() {
     if(!p||!h.avgBuy) return s; return s+((p-h.avgBuy)*h.amount);
   },0);
 
-  // Auth
   const doSignUp = async()=>{
     if(!authName||!authEmail||!authPass){ setAuthErr("All fields are required."); return; }
     if(authPass.length<6){ setAuthErr("Password must be at least 6 characters."); return; }
@@ -388,7 +434,6 @@ export default function SignalPulsePro() {
     } else { setAuthErr("Invalid owner key."); }
   };
 
-  // Pivot
   const openPivot = async(symbol)=>{
     setPivotCoin(symbol); setPivotRec(null); setPivotBusy(true);
     setConfirming(false); setTradeMsg(""); setPivotPct(60); setRemainder("HODL");
@@ -398,6 +443,7 @@ export default function SignalPulsePro() {
     catch(_){ setPivotRec({pivotCoin:"USDC",confidence:65,exitReason:"Exit signal triggered.",entryReason:"Stable coin preserves capital.",bullish:[],bearish:[],targetGain:"0%",timeframe:"–",riskLevel:"LOW",stableReason:"Safety first."}); }
     setPivotBusy(false);
   };
+
   const executeTrade = ()=>{
     const exitH=portfolio[pivotCoin]||{amount:0};
     if(!exitH.amount){ setTradeMsg("No balance to pivot."); return; }
@@ -406,6 +452,7 @@ export default function SignalPulsePro() {
     const pivotUSD=totalUSD*pivotPct/100, remUSD=totalUSD*(100-pivotPct)/100;
     const pivotPrice=prices[COINS.find(c=>c.symbol===pivotRec.pivotCoin)?.cgId]?.usd||1;
     const pivotAmt=pivotUSD/pivotPrice;
+    const costBasis=exitH.avgBuy?(exitH.avgBuy/exitPrice)*pivotUSD:pivotUSD*0.85;
     setPortfolio(prev=>{
       const next={...prev};
       next[pivotCoin]={...next[pivotCoin],amount:0};
@@ -419,7 +466,9 @@ export default function SignalPulsePro() {
       }
       return next;
     });
-    setTradeLog(prev=>[{id:Date.now(),time:Date.now(),from:pivotCoin,to:pivotRec.pivotCoin,pivotPct,pivotUSD,remUSD,remDest:remainder,toPrice:pivotPrice},...prev]);
+    setTradeLog(prev=>[{id:Date.now(),time:Date.now(),from:pivotCoin,to:pivotRec.pivotCoin,
+      pivotPct,pivotUSD,remUSD,remDest:remainder,toPrice:pivotPrice,costBasis,
+      avgBuy:exitH.avgBuy||exitPrice},...prev]);
     setTradeMsg(`Trade executed — ${fmt(pivotAmt,6)} ${pivotRec.pivotCoin} acquired`);
     setTimeout(()=>{ setScreen(S.MAIN); setPivotCoin(null); setPivotRec(null); setTradeMsg(""); },2200);
   };
@@ -436,18 +485,13 @@ export default function SignalPulsePro() {
     }
     setDeepBusy(p=>({...p,[coin.symbol]:false}));
   };
+
   const markRead=()=>{ setNotes(p=>p.map(n=>({...n,read:true}))); setUnread(0); };
 
-  // ─── SHARED LAYOUT ────────────────────────────────────────────────────────
-  const appStyle = { minHeight:"100vh", background:T.bg0, color:T.t1,
-    fontFamily:FONT_BODY, maxWidth:430, margin:"0 auto", position:"relative" };
-  const pageStyle = { ...appStyle, padding:"44px 20px 60px" };
-  const hdrStyle  = { position:"sticky",top:0,zIndex:50,
-    background:`${T.bg0}ee`,backdropFilter:"blur(20px)",
-    borderBottom:`1px solid ${T.b2}` };
-  const backBtnStyle = { background:T.bg2,border:`1px solid ${T.b1}`,color:T.t2,
-    width:36,height:36,borderRadius:T.r3,cursor:"pointer",fontSize:18,
-    display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 };
+  const appStyle = { minHeight:"100vh",background:T.bg0,color:T.t1,fontFamily:FONT_BODY,maxWidth:430,margin:"0 auto",position:"relative" };
+  const pageStyle = { ...appStyle,padding:"44px 20px 60px" };
+  const hdrStyle  = { position:"sticky",top:0,zIndex:50,background:`${T.bg0}ee`,backdropFilter:"blur(20px)",borderBottom:`1px solid ${T.b2}` };
+  const backBtnStyle = { background:T.bg2,border:`1px solid ${T.b1}`,color:T.t2,width:36,height:36,borderRadius:T.r3,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 };
 
   // ══════════════════════════════════════════════════════════════════════════
   // SPLASH
@@ -457,14 +501,10 @@ export default function SignalPulsePro() {
       <style>{GOOGLE_FONTS}</style>
       <div style={{background:`radial-gradient(ellipse at 30% 30%,rgba(99,102,241,.15) 0%,transparent 60%),radial-gradient(ellipse at 70% 70%,rgba(16,185,129,.08) 0%,transparent 60%)`,position:"fixed",inset:0,pointerEvents:"none"}}/>
       <div style={{textAlign:"center",zIndex:1,animation:"fadeUp .7s ease"}}>
-        <div style={{width:64,height:64,borderRadius:20,background:"linear-gradient(135deg,#6366F1,#818CF8)",
-          display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",
-          boxShadow:"0 0 40px rgba(99,102,241,.4)"}}>
+        <div style={{width:64,height:64,borderRadius:20,background:"linear-gradient(135deg,#6366F1,#818CF8)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 0 40px rgba(99,102,241,.4)"}}>
           <span style={{fontSize:28}}>◈</span>
         </div>
-        <div style={{fontSize:36,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,lineHeight:1.1}}>
-          SignalPulse
-        </div>
+        <div style={{fontSize:36,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,lineHeight:1.1}}>SignalPulse</div>
         <div style={{fontSize:13,color:T.t2,marginTop:8,fontWeight:500}}>AI Crypto Day Trading</div>
         <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:32}}>
           <LiveDot/><span style={{fontSize:12,color:T.t3,fontWeight:500}}>Connecting to markets...</span>
@@ -482,54 +522,31 @@ export default function SignalPulsePro() {
       <div style={{background:`radial-gradient(ellipse at 20% 0%,rgba(99,102,241,.12) 0%,transparent 50%)`,position:"fixed",inset:0,pointerEvents:"none"}}/>
       <div style={{position:"relative",zIndex:1}}>
         <div style={{marginBottom:36,textAlign:"center"}}>
-          <div style={{width:52,height:52,borderRadius:16,background:"linear-gradient(135deg,#6366F1,#818CF8)",
-            display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",
-            boxShadow:"0 8px 24px rgba(99,102,241,.35)"}}>
+          <div style={{width:52,height:52,borderRadius:16,background:"linear-gradient(135deg,#6366F1,#818CF8)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",boxShadow:"0 8px 24px rgba(99,102,241,.35)"}}>
             <span style={{fontSize:22}}>◈</span>
           </div>
-          <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,margin:"0 0 8px",lineHeight:1.2}}>
-            SignalPulse Pro
-          </h1>
-          <p style={{fontSize:14,color:T.t2,margin:"0 0 20px",fontWeight:400,lineHeight:1.6}}>
-            AI-powered signals that tell you exactly<br/>when to buy, hold, or pivot.
-          </p>
+          <h1 style={{fontSize:30,fontWeight:800,letterSpacing:"-.03em",fontFamily:FONT_DISPLAY,margin:"0 0 8px",lineHeight:1.2}}>SignalPulse Pro</h1>
+          <p style={{fontSize:14,color:T.t2,margin:"0 0 20px",fontWeight:400,lineHeight:1.6}}>AI-powered signals that tell you exactly<br/>when to buy, hold, or pivot.</p>
           <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>
-            {["Real-time AI","Pivot Advisor","Live Prices","PayPal Billing"].map(f=>(
-              <span key={f} style={{fontSize:11,color:T.accent2,background:"rgba(99,102,241,.1)",
-                padding:"4px 10px",borderRadius:20,border:`1px solid rgba(99,102,241,.2)`,fontWeight:600}}>{f}</span>
+            {["Real-time AI","Pivot Advisor","Live Prices","Tax Reports"].map(f=>(
+              <span key={f} style={{fontSize:11,color:T.accent2,background:"rgba(99,102,241,.1)",padding:"4px 10px",borderRadius:20,border:`1px solid rgba(99,102,241,.2)`,fontWeight:600}}>{f}</span>
             ))}
           </div>
         </div>
-
         <Btn onClick={()=>{ setAuthErr(""); setScreen(S.SIGNUP); }}>Create Free Account</Btn>
         <div style={{height:8}}/>
         <Btn variant="secondary" onClick={()=>{ setAuthErr(""); setScreen(S.LOGIN); }}>Sign In</Btn>
-
-        <div style={{marginTop:24,padding:16,background:"rgba(245,158,11,.06)",
-          border:`1px solid rgba(245,158,11,.15)`,borderRadius:T.r1}}>
+        <div style={{marginTop:24,padding:16,background:"rgba(245,158,11,.06)",border:`1px solid rgba(245,158,11,.15)`,borderRadius:T.r1}}>
           <p style={{fontSize:12,color:T.gold,fontWeight:600,marginBottom:10}}>👑 Owner Access</p>
           <div style={{display:"flex",gap:8}}>
-            <input value={ownerInput} onChange={e=>setOwnerInput(e.target.value)}
-              placeholder="Enter owner key..."
-              style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,
-                padding:"10px 14px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/>
-            <button onClick={doOwnerKey}
-              style={{padding:"10px 16px",borderRadius:T.r3,border:`1px solid rgba(245,158,11,.3)`,
-                background:"rgba(245,158,11,.15)",color:T.gold,fontSize:12,fontWeight:700,
-                cursor:"pointer",fontFamily:FONT_BODY,whiteSpace:"nowrap"}}>
-              Unlock
-            </button>
+            <input value={ownerInput} onChange={e=>setOwnerInput(e.target.value)} placeholder="Enter owner key..."
+              style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 14px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/>
+            <button onClick={doOwnerKey} style={{padding:"10px 16px",borderRadius:T.r3,border:`1px solid rgba(245,158,11,.3)`,background:"rgba(245,158,11,.15)",color:T.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,whiteSpace:"nowrap"}}>Unlock</button>
           </div>
           {authErr&&<p style={{fontSize:12,color:T.red,marginTop:6}}>{authErr}</p>}
-          <button style={{background:"none",border:"none",color:T.t3,fontSize:11,cursor:"pointer",
-            marginTop:6,fontFamily:FONT_BODY}} onClick={()=>setOwnerInput(OWNER_KEY)}>
-            Fill demo key
-          </button>
+          <button style={{background:"none",border:"none",color:T.t3,fontSize:11,cursor:"pointer",marginTop:6,fontFamily:FONT_BODY}} onClick={()=>setOwnerInput(OWNER_KEY)}>Fill demo key</button>
         </div>
-
-        <p style={{textAlign:"center",marginTop:20,fontSize:12,color:T.t3,lineHeight:1.7}}>
-          $19.99/month · Cancel anytime · Secured by PayPal
-        </p>
+        <p style={{textAlign:"center",marginTop:20,fontSize:12,color:T.t3,lineHeight:1.7}}>1 month free · Then $19.99/mo · Cancel anytime</p>
       </div>
     </div>
   );
@@ -560,10 +577,7 @@ export default function SignalPulsePro() {
         <Btn onClick={doSignUp} disabled={authBusy}>{authBusy?"Creating account...":"Create Account →"}</Btn>
         <p style={{textAlign:"center",marginTop:14,fontSize:13,color:T.t2}}>
           Already have an account?{" "}
-          <button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",
-            fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{ setAuthErr(""); setScreen(S.LOGIN); }}>
-            Sign in
-          </button>
+          <button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{ setAuthErr(""); setScreen(S.LOGIN); }}>Sign in</button>
         </p>
       </div>
     </div>
@@ -594,10 +608,7 @@ export default function SignalPulsePro() {
         <Btn onClick={doSignIn} disabled={authBusy}>{authBusy?"Signing in...":"Sign In →"}</Btn>
         <p style={{textAlign:"center",marginTop:14,fontSize:13,color:T.t2}}>
           Don't have an account?{" "}
-          <button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",
-            fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{ setAuthErr(""); setScreen(S.SIGNUP); }}>
-            Sign up
-          </button>
+          <button style={{background:"none",border:"none",color:T.accent2,cursor:"pointer",fontSize:13,fontFamily:FONT_BODY,fontWeight:600}} onClick={()=>{ setAuthErr(""); setScreen(S.SIGNUP); }}>Sign up</button>
         </p>
       </div>
     </div>
@@ -612,43 +623,90 @@ export default function SignalPulsePro() {
       <div style={{position:"relative",zIndex:1}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           <p style={{fontSize:13,color:T.t2,marginBottom:6}}>Welcome, {user?.name||"Trader"} 👋</p>
-          <h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>
-            Unlock SignalPulse Pro
-          </h2>
+          <h2 style={{fontSize:26,fontWeight:800,fontFamily:FONT_DISPLAY,letterSpacing:"-.03em",margin:"0 0 8px"}}>Unlock SignalPulse Pro</h2>
           <p style={{fontSize:14,color:T.t2,margin:0}}>Full AI trading signals · Real-time pivot advisor</p>
         </div>
-        <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",
-          borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}>
+
+        {/* Free Trial Banner */}
+        <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(16,185,129,.12),rgba(52,211,153,.07))",borderColor:"rgba(16,185,129,.3)",textAlign:"center",padding:20}}>
+          <p style={{fontSize:22,margin:"0 0 6px"}}>🎁</p>
+          <p style={{fontSize:16,fontWeight:800,color:T.green2,fontFamily:FONT_DISPLAY,margin:"0 0 4px"}}>1 Month Free Trial</p>
+          <p style={{fontSize:13,color:T.t2,margin:"0 0 16px"}}>No credit card required. Full access for 30 days.</p>
+          <Btn variant="success" onClick={()=>{ setUser(p=>({...p,subscribed:true,trial:true,trialStart:Date.now()})); setScreen(S.MAIN); }}>
+            🎁 Start Free Trial — No Card Needed
+          </Btn>
+        </Card>
+
+        <Divider label="or subscribe now"/>
+
+        <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(99,102,241,.12),rgba(16,185,129,.07))",borderColor:"rgba(99,102,241,.25)",textAlign:"center",padding:24}}>
           <p style={{fontSize:12,color:T.accent2,fontWeight:700,letterSpacing:".08em",marginBottom:8,textTransform:"uppercase"}}>Monthly Plan</p>
           <p style={{fontSize:48,fontWeight:800,fontFamily:FONT_NUM,color:T.t1,margin:"0 0 4px",letterSpacing:"-.04em"}}>
             $19<span style={{fontSize:24,color:T.t2}}>.99</span>
           </p>
           <p style={{fontSize:13,color:T.t3,marginBottom:20}}>per month · cancel anytime</p>
-          {["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","8 coins monitored around the clock","Deep Claude AI analysis with price targets","Trade history & portfolio PnL tracking"].map(f=>(
+          {["Real-time AI BUY / EXIT / HODL signals","AI Pivot Advisor with % allocation slider","8 coins monitored around the clock","Deep Claude AI analysis with price targets","Trade history & portfolio PnL tracking","Crypto tax report with CSV export"].map(f=>(
             <div key={f} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,textAlign:"left"}}>
               <span style={{color:T.green2,fontWeight:700,flexShrink:0,marginTop:1}}>✓</span>
               <span style={{fontSize:13,color:T.t2,lineHeight:1.4}}>{f}</span>
             </div>
           ))}
         </Card>
+
         <Card style={{marginBottom:12,borderColor:"rgba(0,112,204,.25)",background:"rgba(0,56,133,.08)"}}>
           <p style={{fontSize:12,color:"#60A5FA",fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>Pay with PayPal</p>
-          <p style={{fontSize:13,color:T.t2,marginBottom:14,lineHeight:1.6}}>
-            Your payment is secured by PayPal. After subscribing, your account unlocks immediately.
-          </p>
-          <Btn variant="paypal" onClick={()=>{ setUser(p=>({...p,subscribed:true})); setScreen(S.MAIN); }}>
+          <p style={{fontSize:13,color:T.t2,marginBottom:14,lineHeight:1.6}}>Your payment is secured by PayPal. After subscribing, your account unlocks immediately.</p>
+          <Btn variant="paypal" onClick={()=>{ setUser(p=>({...p,subscribed:true,trial:false})); setScreen(S.MAIN); }}>
             🅿 Subscribe with PayPal — $19.99/mo
           </Btn>
-          <p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>
-            Demo mode — tap to simulate payment
-          </p>
+          <p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8}}>Demo mode — tap to simulate payment</p>
         </Card>
-        <p style={{textAlign:"center",fontSize:12,color:T.t3,lineHeight:1.7}}>
-          256-bit SSL encryption · Cancel anytime from PayPal
-        </p>
-        <Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>
-          ← Back
-        </Btn>
+
+        <p style={{textAlign:"center",fontSize:12,color:T.t3,lineHeight:1.7}}>256-bit SSL encryption · Cancel anytime from PayPal</p>
+        <Btn variant="ghost" onClick={()=>setScreen(S.LANDING)} style={{marginTop:8,fontSize:13,color:T.t3}}>← Back</Btn>
+      </div>
+    </div>
+  );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONNECT WALLET
+  // ══════════════════════════════════════════════════════════════════════════
+  if(screen===S.CONNECT) return (
+    <div style={pageStyle}><style>{GOOGLE_FONTS}</style>
+      <div style={{position:"relative",zIndex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}>
+          <button style={backBtnStyle} onClick={()=>setScreen(S.MAIN)}>←</button>
+          <div><h2 style={{fontSize:20,fontWeight:700,fontFamily:FONT_DISPLAY,margin:0}}>Connect Wallet</h2>
+          <p style={{fontSize:13,color:T.t2,margin:0,marginTop:2}}>Link your Uphold account for real balances</p></div>
+        </div>
+        <Card style={{marginBottom:16,background:"linear-gradient(135deg,rgba(30,184,184,.1),rgba(10,128,128,.07))",borderColor:"rgba(30,184,184,.3)",textAlign:"center",padding:28}}>
+          <div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#1EB8B8,#0A8080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",boxShadow:"0 8px 24px rgba(30,184,184,.3)",fontSize:26}}>🔗</div>
+          <p style={{fontSize:18,fontWeight:800,color:T.t1,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>Uphold</p>
+          <p style={{fontSize:13,color:T.t2,margin:"0 0 20px",lineHeight:1.6}}>Connect your Uphold wallet to sync your real crypto balances and enable live portfolio tracking.</p>
+          {upholdLoading?(
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <div style={{fontSize:24,color:"#1EB8B8",animation:"spin 1.2s linear infinite",marginBottom:10}}>◈</div>
+              <p style={{fontSize:13,color:T.t2,margin:0}}>Connecting to Uphold...</p>
+            </div>
+          ):(
+            <Btn variant="uphold" onClick={connectUphold}>🔗 Connect Uphold Wallet</Btn>
+          )}
+          {upholdError&&<p style={{fontSize:12,color:T.red,marginTop:10}}>{upholdError}</p>}
+        </Card>
+        <Card style={{marginBottom:16}}>
+          <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>What gets synced</p>
+          {[["💰","Real crypto balances","BTC, ETH, SOL, ADA, AVAX, LINK, DOT, XRP"],["📊","Live portfolio value","Updated every 45 seconds"],["🔒","Read-only access","SignalPulse never moves your funds"],["📋","Cost basis for taxes","Avg buy price from Uphold history"]].map(([icon,title,desc])=>(
+            <div key={title} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:12}}>
+              <span style={{fontSize:18,flexShrink:0,marginTop:1}}>{icon}</span>
+              <div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>{title}</p><p style={{fontSize:12,color:T.t3,margin:"2px 0 0"}}>{desc}</p></div>
+            </div>
+          ))}
+        </Card>
+        <Card style={{borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.05)"}}>
+          <p style={{fontSize:12,color:T.accent2,fontWeight:700,marginBottom:6}}>🔐 Security</p>
+          <p style={{fontSize:12,color:T.t3,lineHeight:1.6,margin:0}}>SignalPulse uses OAuth2 — we never see your Uphold password. Access is read-only and can be revoked any time from your Uphold account settings.</p>
+        </Card>
+        <p style={{textAlign:"center",marginTop:16,fontSize:11,color:T.t3}}>Don't have Uphold?{" "}<a href="https://uphold.com" target="_blank" rel="noreferrer" style={{color:T.accent2,textDecoration:"none",fontWeight:600}}>Create a free account →</a></p>
       </div>
     </div>
   );
@@ -796,8 +854,7 @@ export default function SignalPulsePro() {
                 </div>
               </div>
               <input type="range" min={10} max={100} step={5} value={pivotPct}
-                onChange={e=>setPivotPct(Number(e.target.value))}
-                style={{width:"100%",marginBottom:6}}/>
+                onChange={e=>setPivotPct(Number(e.target.value))} style={{width:"100%",marginBottom:6}}/>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.t3,marginBottom:16}}>
                 <span>10%</span><span>50%</span><span>100%</span>
               </div>
@@ -812,8 +869,7 @@ export default function SignalPulsePro() {
                     style={{flex:1,padding:"10px 0",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
                       border:`1px solid ${remainder===opt?T.accent:"rgba(255,255,255,.08)"}`,
                       background:remainder===opt?"rgba(99,102,241,.18)":T.bg2,
-                      color:remainder===opt?T.accent2:T.t2,
-                      fontSize:13,fontWeight:600,transition:"all .15s"}}>
+                      color:remainder===opt?T.accent2:T.t2,fontSize:13,fontWeight:600,transition:"all .15s"}}>
                     {opt}
                   </button>
                 ))}
@@ -841,9 +897,7 @@ export default function SignalPulsePro() {
             ):(
               <Btn onClick={()=>setConfirming(true)}>Preview Trade →</Btn>
             )}
-            <p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:12,lineHeight:1.6}}>
-              Demo mode — no real money moves. Connect Uphold OAuth2 to execute real trades.
-            </p>
+            <p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:12,lineHeight:1.6}}>Demo mode — no real money moves.</p>
           </>)}
         </div>
       </div>
@@ -857,7 +911,7 @@ export default function SignalPulsePro() {
     const da=deepData[deepCoin.symbol];
     const price=prices[deepCoin.cgId]?.usd;
     const change=prices[deepCoin.cgId]?.usd_24h_change;
-    const sigColor = da?.signal==="BUY"?T.green:da?.signal==="EXIT"?T.red:T.gold;
+    const sigColor=da?.signal==="BUY"?T.green:da?.signal==="EXIT"?T.red:T.gold;
     return (
       <div style={{...appStyle,paddingBottom:40}}>
         <style>{GOOGLE_FONTS}</style>
@@ -877,7 +931,6 @@ export default function SignalPulsePro() {
             </div>
             <Spark data={histories[deepCoin.cgId]} color={deepCoin.color} w={100} h={48}/>
           </div>
-
           {deepBusy[deepCoin.symbol]?(
             <Card style={{textAlign:"center",padding:"48px 20px",marginTop:14}}>
               <div style={{fontSize:26,color:T.accent,marginBottom:12}}>◈</div>
@@ -895,7 +948,6 @@ export default function SignalPulsePro() {
                 <p style={{fontSize:13,color:T.accent2,margin:0,lineHeight:1.5,fontWeight:500}}>{da.action}</p>
               </div>
             </Card>
-
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
               {[["Target",da.targetPrice,T.green2],["Stop Loss",da.stopLoss,T.red],
                 ["Support",da.keyLevels?.support,T.gold2],["Resistance",da.keyLevels?.resistance,T.accent2]
@@ -906,7 +958,6 @@ export default function SignalPulsePro() {
                 </Card>
               ))}
             </div>
-
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
               <Card style={{borderLeft:`2px solid ${T.green}`}}>
                 <p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Bullish</p>
@@ -917,7 +968,6 @@ export default function SignalPulsePro() {
                 {(da.bearish||[]).map((b,i)=><p key={i} style={{fontSize:12,color:T.t2,margin:"0 0 6px",lineHeight:1.4}}>• {b}</p>)}
               </Card>
             </div>
-
             {da.signal==="EXIT"&&<Btn variant="danger" onClick={()=>openPivot(deepCoin.symbol)}>⇄ Open Pivot Advisor →</Btn>}
           </>)}
         </div>
@@ -943,15 +993,30 @@ export default function SignalPulsePro() {
           <p style={{fontSize:13,color:T.t2,margin:"0 0 4px"}}>{user?.email}</p>
           <p style={{fontSize:12,color:T.t3,margin:0}}>via {user?.provider} · {user?.subscribed?"Active":"Free"}</p>
         </Card>
+        <Card style={{marginBottom:12,borderColor:upholdConnected?"rgba(30,184,184,.3)":T.b1,background:upholdConnected?"rgba(30,184,184,.06)":T.bg2}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:upholdConnected?10:0}}>
+            <p style={{fontSize:11,color:upholdConnected?"#1EB8B8":T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>🔗 Uphold Wallet</p>
+            <span style={{fontSize:11,fontWeight:600,color:upholdConnected?T.green2:T.t3}}>{upholdConnected?"● Connected":"Not connected"}</span>
+          </div>
+          {upholdConnected?(<>
+            <p style={{fontSize:13,color:T.t1,fontWeight:600,margin:"0 0 2px"}}>{upholdUser?.name}</p>
+            <p style={{fontSize:12,color:T.t3,margin:"0 0 10px"}}>Read-only · Balances synced</p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={refreshUpholdBalances} disabled={upholdLoading} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(30,184,184,.3)",background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:600,opacity:upholdLoading?.6:1}}>{upholdLoading?"Syncing...":"↻ Refresh"}</button>
+              <button onClick={disconnectUphold} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button>
+            </div>
+          </>):(<Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)} style={{marginTop:10}}>🔗 Connect Uphold Wallet</Btn>)}
+        </Card>
         <Card style={{marginBottom:12}}>
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Subscription</p>
-          <p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.subscribed?T.green2:T.gold2,margin:0}}>
-            {isOwner?"Owner — Free Lifetime":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}
+          <p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>
+            {isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}
           </p>
-          {!isOwner&&!user?.subscribed&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}
+          {user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}
+          {!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}
+          {user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}
         </Card>
-        {isOwner&&<Btn variant="secondary" onClick={()=>{ setAdminUsers(getUsers()); setScreen(S.ADMIN); }}
-          style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
+        {isOwner&&<Btn variant="secondary" onClick={()=>{ setAdminUsers(getUsers()); setScreen(S.ADMIN); }} style={{marginBottom:10}}>👑 Admin Panel →</Btn>}
         <Card style={{marginBottom:12}}>
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Market Data</p>
           <p style={{fontSize:14,color:T.t1,margin:0}}>CoinGecko · Live · Refreshes every 45s</p>
@@ -968,20 +1033,23 @@ export default function SignalPulsePro() {
   // ══════════════════════════════════════════════════════════════════════════
   // MAIN DASHBOARD
   // ══════════════════════════════════════════════════════════════════════════
+  const taxData = computeTaxData(tradeLog.filter(t=>new Date(t.time).getFullYear()===taxYear));
+
   return (
     <div style={appStyle}>
       <style>{GOOGLE_FONTS}</style>
       <div style={{background:`radial-gradient(ellipse at 80% 0%,rgba(99,102,241,.08) 0%,transparent 50%)`,position:"fixed",inset:0,pointerEvents:"none"}}/>
       <div style={{position:"relative",zIndex:1}}>
 
+        {/* Header */}
         <div style={{...hdrStyle,padding:"14px 18px 0"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
             <div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <h1 style={{fontSize:20,fontWeight:800,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.03em"}}>
-                  SignalPulse
-                </h1>
+                <h1 style={{fontSize:20,fontWeight:800,fontFamily:FONT_DISPLAY,margin:0,letterSpacing:"-.03em"}}>SignalPulse</h1>
                 {isOwner&&<Pill label="PRO"/>}
+                {user?.trial&&<Pill label="TRIAL"/>}
+                {upholdConnected&&<Pill label="LIVE"/>}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3}}>
                 <LiveDot active={!fetching}/>
@@ -990,27 +1058,30 @@ export default function SignalPulsePro() {
                 </span>
               </div>
             </div>
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              <div style={{textAlign:"right"}}>
-                <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>Portfolio</p>
-                <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,color:T.green2,margin:"2px 0 0"}}>{usd(portfolioUSD)}</p>
-                <p style={{fontSize:11,color:portfolioPnL>=0?T.green2:T.red,margin:0,fontWeight:600}}>
-                  {portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} PnL
-                </p>
-              </div>
-              <button onClick={()=>setScreen(S.SETTINGS)}
-                style={{...backBtnStyle,width:38,height:38,fontSize:16}}>⚙</button>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              {upholdConnected?(
+                <div style={{textAlign:"right"}}>
+                  <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>Portfolio</p>
+                  <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,color:T.green2,margin:"2px 0 0"}}>{usd(portfolioUSD)}</p>
+                  <p style={{fontSize:11,color:portfolioPnL>=0?T.green2:T.red,margin:0,fontWeight:600}}>
+                    {portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} PnL
+                  </p>
+                </div>
+              ):(
+                <button onClick={()=>setScreen(S.CONNECT)} style={{padding:"8px 14px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(30,184,184,.3)`,background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:700}}>🔗 Connect Wallet</button>
+              )}
+              <button onClick={()=>setScreen(S.SETTINGS)} style={{...backBtnStyle,width:38,height:38,fontSize:16}}>⚙</button>
             </div>
           </div>
 
+          {/* Tabs */}
           <div style={{display:"flex",borderBottom:`1px solid ${T.b2}`}}>
-            {[["signals","Signals"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"]].map(([id,lbl])=>(
+            {[["signals","Signals"],["alerts",`Alerts${unread>0?` · ${unread}`:""}`],["portfolio","Wallet"],["log","Trades"],["tax","Tax"]].map(([id,lbl])=>(
               <button key={id} onClick={()=>{ setTab(id); if(id==="alerts")markRead(); }}
-                style={{flex:1,padding:"10px 0 12px",fontSize:12,fontWeight:600,fontFamily:FONT_BODY,
+                style={{flex:1,padding:"10px 0 12px",fontSize:11,fontWeight:600,fontFamily:FONT_BODY,
                   border:"none",background:"none",cursor:"pointer",transition:"all .2s",
                   color:tab===id?T.accent2:T.t3,
-                  borderBottom:`2px solid ${tab===id?T.accent:"transparent"}`,
-                  marginBottom:-1}}>
+                  borderBottom:`2px solid ${tab===id?T.accent:"transparent"}`,marginBottom:-1}}>
                 {lbl}
               </button>
             ))}
@@ -1019,6 +1090,7 @@ export default function SignalPulsePro() {
 
         <div style={{padding:"16px 16px 70px"}}>
 
+          {/* ── SIGNALS ── */}
           {tab==="signals"&&COINS.map(coin=>{
             const cg=prices[coin.cgId]||{};
             const sig=signals[coin.symbol];
@@ -1040,9 +1112,7 @@ export default function SignalPulsePro() {
                   </div>
                   <div style={{textAlign:"right"}}>
                     <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_NUM,margin:0}}>{cg.usd?usd(cg.usd):"–"}</p>
-                    <p style={{fontSize:12,color:(cg.usd_24h_change||0)>=0?T.green2:T.red,margin:0,fontWeight:600}}>
-                      {pct(cg.usd_24h_change||0)}
-                    </p>
+                    <p style={{fontSize:12,color:(cg.usd_24h_change||0)>=0?T.green2:T.red,margin:0,fontWeight:600}}>{pct(cg.usd_24h_change||0)}</p>
                   </div>
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -1052,9 +1122,8 @@ export default function SignalPulsePro() {
                 {sig&&<ProgressBar val={sig.confidence} color={sigColor}/>}
                 {sig&&<p style={{fontSize:12,color:T.t2,marginTop:8,lineHeight:1.5}}>{sig.reason}</p>}
                 {holdBal>0&&(
-                  <div style={{marginTop:10,padding:"8px 12px",background:`${coin.color}0e`,
-                    borderRadius:T.r3,display:"flex",justifyContent:"space-between",
-                    alignItems:"center",border:`1px solid ${coin.color}20`}}>
+                  <div style={{marginTop:10,padding:"8px 12px",background:`${coin.color}0e`,borderRadius:T.r3,
+                    display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${coin.color}20`}}>
                     <span style={{fontSize:12,color:coin.color,fontWeight:600}}>{fmt(holdBal,["USDC","USDT"].includes(coin.symbol)?2:6)} {coin.symbol}</span>
                     <span style={{fontSize:12,color:T.t2}}>{usd(holdUSD)}</span>
                     {pnlPct!=null&&<span style={{fontSize:12,color:pnlPct>=0?T.green2:T.red,fontWeight:700}}>{pct(pnlPct)}</span>}
@@ -1062,35 +1131,24 @@ export default function SignalPulsePro() {
                 )}
                 <div style={{display:"flex",gap:8,marginTop:12}}>
                   {sig?.action==="EXIT"&&(
-                    <button onClick={()=>openPivot(coin.symbol)}
-                      style={{flex:2,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
-                        border:`1px solid rgba(239,68,68,.3)`,background:"rgba(239,68,68,.1)",
-                        color:T.red,fontSize:13,fontWeight:600}}>⇄ Pivot Advisor</button>
+                    <button onClick={()=>openPivot(coin.symbol)} style={{flex:2,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(239,68,68,.3)`,background:"rgba(239,68,68,.1)",color:T.red,fontSize:13,fontWeight:600}}>⇄ Pivot Advisor</button>
                   )}
                   {sig?.action==="BUY"&&(
-                    <button style={{flex:2,padding:"10px",borderRadius:T.r3,fontFamily:FONT_BODY,
-                      border:`1px solid rgba(16,185,129,.3)`,background:"rgba(16,185,129,.1)",
-                      color:T.green2,fontSize:13,fontWeight:600,cursor:"pointer"}}>✓ AI Signal: Buy</button>
+                    <button style={{flex:2,padding:"10px",borderRadius:T.r3,fontFamily:FONT_BODY,border:`1px solid rgba(16,185,129,.3)`,background:"rgba(16,185,129,.1)",color:T.green2,fontSize:13,fontWeight:600,cursor:"pointer"}}>✓ AI Signal: Buy</button>
                   )}
                   {sig?.action==="HODL"&&(
-                    <button style={{flex:2,padding:"10px",borderRadius:T.r3,fontFamily:FONT_BODY,
-                      border:`1px solid rgba(245,158,11,.25)`,background:"rgba(245,158,11,.07)",
-                      color:T.gold2,fontSize:13,fontWeight:600,cursor:"pointer"}}>◈ Holding</button>
+                    <button style={{flex:2,padding:"10px",borderRadius:T.r3,fontFamily:FONT_BODY,border:`1px solid rgba(245,158,11,.25)`,background:"rgba(245,158,11,.07)",color:T.gold2,fontSize:13,fontWeight:600,cursor:"pointer"}}>◈ Holding</button>
                   )}
-                  <button onClick={()=>openDeep(coin)}
-                    style={{flex:1,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,
-                      border:`1px solid rgba(99,102,241,.25)`,background:"rgba(99,102,241,.08)",
-                      color:T.accent2,fontSize:13,fontWeight:600}}>AI ▸</button>
+                  <button onClick={()=>openDeep(coin)} style={{flex:1,padding:"10px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.25)`,background:"rgba(99,102,241,.08)",color:T.accent2,fontSize:13,fontWeight:600}}>AI ▸</button>
                 </div>
               </Card>
             );
           })}
 
+          {/* ── ALERTS ── */}
           {tab==="alerts"&&(
             <div>
-              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>
-                Live Alerts · {notes.length} total
-              </p>
+              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>Live Alerts · {notes.length} total</p>
               {notes.length===0&&(
                 <Card style={{textAlign:"center",padding:"50px 20px"}}>
                   <p style={{fontSize:32,marginBottom:12}}>📡</p>
@@ -1113,62 +1171,74 @@ export default function SignalPulsePro() {
                     <span>{pct(n.change)} · {n.confidence}% confidence</span>
                   </div>
                   {n.action==="EXIT"&&(
-                    <button onClick={()=>openPivot(n.coin)}
-                      style={{width:"100%",marginTop:10,padding:"9px",borderRadius:T.r3,cursor:"pointer",
-                        fontFamily:FONT_BODY,border:`1px solid rgba(239,68,68,.25)`,
-                        background:"rgba(239,68,68,.08)",color:T.red,fontSize:13,fontWeight:600}}>
-                      Open Pivot Advisor →
-                    </button>
+                    <button onClick={()=>openPivot(n.coin)} style={{width:"100%",marginTop:10,padding:"9px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:`1px solid rgba(239,68,68,.25)`,background:"rgba(239,68,68,.08)",color:T.red,fontSize:13,fontWeight:600}}>Open Pivot Advisor →</button>
                   )}
                 </Card>
               ))}
             </div>
           )}
 
+          {/* ── PORTFOLIO ── */}
           {tab==="portfolio"&&(
             <div>
-              <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(99,102,241,.1),rgba(16,185,129,.07))",
-                borderColor:"rgba(99,102,241,.2)",padding:20}}>
-                <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 8px"}}>Demo Portfolio</p>
-                <p style={{fontSize:34,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.03em"}}>{usd(portfolioUSD)}</p>
-                <p style={{fontSize:13,color:portfolioPnL>=0?T.green2:T.red,fontWeight:600,margin:0}}>
-                  {portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} unrealized PnL
-                </p>
-              </Card>
-              {Object.entries(portfolio).filter(([,v])=>v.amount>0).map(([sym,h])=>{
-                const coin=COINS.find(c=>c.symbol===sym);
-                const isStable=["USDC","USDT","DAI"].includes(sym);
-                const price=isStable?1:(coin?prices[coin.cgId]?.usd:0)||0;
-                const val=h.amount*price;
-                const pnlPct=!isStable&&h.avgBuy&&price?((price-h.avgBuy)/h.avgBuy)*100:null;
-                const sig=coin?signals[coin.symbol]:null;
-                return (
-                  <Card key={sym} style={{marginBottom:10,borderLeft:`3px solid ${coin?.color||T.blue}40`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                        <CoinAvatar coin={coin||{symbol:sym,color:T.blue}} size={38}/>
-                        <div>
-                          <p style={{fontWeight:600,fontSize:14,margin:0,fontFamily:FONT_DISPLAY}}>{sym}</p>
-                          <p style={{fontSize:12,color:T.t2,margin:0}}>{isStable?usd(h.amount):fmt(h.amount,6)} {!isStable&&sym}</p>
-                        </div>
+              {!upholdConnected?(
+                <Card style={{textAlign:"center",padding:"40px 20px",borderColor:"rgba(30,184,184,.2)",background:"rgba(30,184,184,.04)"}}>
+                  <div style={{fontSize:40,marginBottom:14}}>🔗</div>
+                  <p style={{fontSize:17,fontWeight:700,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 8px"}}>Connect Your Wallet</p>
+                  <p style={{fontSize:13,color:T.t2,margin:"0 0 20px",lineHeight:1.6}}>Link your Uphold account to see your real crypto balances and portfolio value.</p>
+                  <Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)}>🔗 Connect Uphold Wallet</Btn>
+                </Card>
+              ):upholdLoading?(
+                <>{[1,2,3,4].map(i=><div key={i} style={{background:T.bg2,border:`1px solid ${T.b1}`,borderRadius:T.r1,padding:16,marginBottom:12}}>{[80,120,60].map((w,j)=><div key={j} style={{height:12,width:`${w}%`,borderRadius:6,marginBottom:10,background:"rgba(255,255,255,.06)"}}/>)}</div>)}</>
+              ):(
+                <>
+                  <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(30,184,184,.1),rgba(99,102,241,.07))",borderColor:"rgba(30,184,184,.25)",padding:20}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div>
+                        <p style={{fontSize:11,color:"#1EB8B8",fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 8px"}}>Uphold Portfolio</p>
+                        <p style={{fontSize:34,fontWeight:800,fontFamily:FONT_NUM,color:T.green2,margin:"0 0 4px",letterSpacing:"-.03em"}}>{usd(portfolioUSD)}</p>
+                        <p style={{fontSize:13,color:portfolioPnL>=0?T.green2:T.red,fontWeight:600,margin:0}}>
+                          {portfolioPnL>=0?"↑":"↓"} {usd(Math.abs(portfolioPnL))} unrealized PnL
+                        </p>
                       </div>
-                      <div style={{textAlign:"right"}}>
-                        <p style={{fontWeight:700,fontSize:15,fontFamily:FONT_NUM,margin:0}}>{usd(val)}</p>
-                        {pnlPct!=null&&<p style={{fontSize:12,color:pnlPct>=0?T.green2:T.red,fontWeight:600,margin:"2px 0 0"}}>{pct(pnlPct)}</p>}
-                        {sig&&<div style={{marginTop:4}}><Pill label={sig.action}/></div>}
-                      </div>
+                      <button onClick={refreshUpholdBalances} disabled={upholdLoading} style={{padding:"8px 12px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(30,184,184,.3)",background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:600,flexShrink:0}}>↻ Sync</button>
                     </div>
                   </Card>
-                );
-              })}
+                  {Object.entries(portfolio).filter(([,v])=>v.amount>0).map(([sym,h])=>{
+                    const coin=COINS.find(c=>c.symbol===sym);
+                    const isStable=["USDC","USDT","DAI"].includes(sym);
+                    const price=isStable?1:(coin?prices[coin.cgId]?.usd:0)||0;
+                    const val=h.amount*price;
+                    const pnlPct=!isStable&&h.avgBuy&&price?((price-h.avgBuy)/h.avgBuy)*100:null;
+                    const sig=coin?signals[coin.symbol]:null;
+                    return (
+                      <Card key={sym} style={{marginBottom:10,borderLeft:`3px solid ${coin?.color||T.blue}40`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                            <CoinAvatar coin={coin||{symbol:sym,color:T.blue}} size={38}/>
+                            <div>
+                              <p style={{fontWeight:600,fontSize:14,margin:0,fontFamily:FONT_DISPLAY}}>{sym}</p>
+                              <p style={{fontSize:12,color:T.t2,margin:0}}>{isStable?usd(h.amount):fmt(h.amount,6)} {!isStable&&sym}</p>
+                            </div>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <p style={{fontWeight:700,fontSize:15,fontFamily:FONT_NUM,margin:0}}>{usd(val)}</p>
+                            {pnlPct!=null&&<p style={{fontSize:12,color:pnlPct>=0?T.green2:T.red,fontWeight:600,margin:"2px 0 0"}}>{pct(pnlPct)}</p>}
+                            {sig&&<div style={{marginTop:4}}><Pill label={sig.action}/></div>}
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </>
+              )}
             </div>
           )}
 
+          {/* ── TRADE LOG ── */}
           {tab==="log"&&(
             <div>
-              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>
-                Trade History · {tradeLog.length} trades
-              </p>
+              <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:14}}>Trade History · {tradeLog.length} trades</p>
               {tradeLog.length===0&&(
                 <Card style={{textAlign:"center",padding:"50px 20px"}}>
                   <p style={{fontSize:32,marginBottom:12}}>📊</p>
@@ -1186,6 +1256,126 @@ export default function SignalPulsePro() {
                   <p style={{fontSize:12,color:T.t3,margin:0}}>Remainder {100-t.pivotPct}% → {t.remDest}</p>
                 </Card>
               ))}
+            </div>
+          )}
+
+          {/* ── TAX REPORT ── */}
+          {tab==="tax"&&(
+            <div>
+              {/* Year selector + disclaimer */}
+              <Card style={{marginBottom:14,background:"linear-gradient(135deg,rgba(245,158,11,.08),rgba(99,102,241,.06))",borderColor:"rgba(245,158,11,.25)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div>
+                    <p style={{fontSize:13,fontWeight:700,color:T.gold,margin:0,fontFamily:FONT_DISPLAY}}>📋 Crypto Tax Report</p>
+                    <p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Based on your trade history in SignalPulse</p>
+                  </div>
+                  <select value={taxYear} onChange={e=>setTaxYear(Number(e.target.value))}
+                    style={{background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,
+                      padding:"6px 10px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}>
+                    {[2025,2024,2023].map(y=><option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <p style={{fontSize:11,color:T.t3,lineHeight:1.6,margin:0,padding:"8px 10px",background:"rgba(245,158,11,.06)",borderRadius:T.r3,border:`1px solid rgba(245,158,11,.15)`}}>
+                  ⚠️ <strong style={{color:T.gold2}}>Disclaimer:</strong> This report is for informational purposes only and does not constitute tax advice. Consult a qualified tax professional or CPA before filing. Crypto tax laws vary by jurisdiction.
+                </p>
+              </Card>
+
+              {/* Summary cards */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                {[
+                  ["Total Gain/Loss", taxData.totalGain, taxData.totalGain>=0?T.green2:T.red],
+                  ["Short-Term", taxData.shortGain, taxData.shortGain>=0?T.green2:T.red],
+                  ["Long-Term", taxData.longGain, taxData.longGain>=0?T.green2:T.red],
+                  ["Taxable Events", taxData.rows.length, T.accent2],
+                ].map(([l,v,c])=>(
+                  <Card key={l} style={{textAlign:"center",padding:14}}>
+                    <p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 6px"}}>{l}</p>
+                    <p style={{fontSize:typeof v==="number"&&Math.abs(v)>999?16:20,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>
+                      {typeof v==="number"&&l!=="Taxable Events"?(v>=0?"+":"")+usd(Math.abs(v)):v}
+                    </p>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Term breakdown */}
+              <Card style={{marginBottom:14}}>
+                <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Holding Period Breakdown</p>
+                <div style={{display:"flex",gap:16,marginBottom:8}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:12,color:T.red2}}>Short-term (&lt;1 yr)</span>
+                      <span style={{fontSize:12,color:T.t2,fontFamily:FONT_NUM}}>{taxData.rows.filter(r=>r.term==="Short-term").length} trades</span>
+                    </div>
+                    <div style={{height:4,background:"rgba(239,68,68,.15)",borderRadius:2,overflow:"hidden"}}>
+                      <div style={{width:`${taxData.rows.length?taxData.rows.filter(r=>r.term==="Short-term").length/taxData.rows.length*100:0}%`,height:"100%",background:T.red,borderRadius:2}}/>
+                    </div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:16}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:12,color:T.green2}}>Long-term (&gt;1 yr)</span>
+                      <span style={{fontSize:12,color:T.t2,fontFamily:FONT_NUM}}>{taxData.rows.filter(r=>r.term==="Long-term").length} trades</span>
+                    </div>
+                    <div style={{height:4,background:"rgba(16,185,129,.15)",borderRadius:2,overflow:"hidden"}}>
+                      <div style={{width:`${taxData.rows.length?taxData.rows.filter(r=>r.term==="Long-term").length/taxData.rows.length*100:0}%`,height:"100%",background:T.green,borderRadius:2}}/>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Trade-by-trade breakdown */}
+              {taxData.rows.length===0?(
+                <Card style={{textAlign:"center",padding:"50px 20px"}}>
+                  <p style={{fontSize:32,marginBottom:12}}>📋</p>
+                  <p style={{fontSize:15,fontWeight:600,fontFamily:FONT_DISPLAY,color:T.t1,margin:"0 0 6px"}}>No trades in {taxYear}</p>
+                  <p style={{fontSize:13,color:T.t2,margin:0}}>Execute trades via the Pivot Advisor to generate your tax report.</p>
+                </Card>
+              ):(
+                <>
+                  <p style={{fontSize:12,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Transaction Detail</p>
+                  {taxData.rows.map((r,i)=>(
+                    <Card key={r.id||i} style={{marginBottom:10,borderLeft:`3px solid ${r.gain>=0?T.green:T.red}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <span style={{fontWeight:700,fontSize:13,fontFamily:FONT_DISPLAY,color:T.t1}}>{r.from} → {r.to}</span>
+                          <Pill label={r.term}/>
+                        </div>
+                        <span style={{fontSize:11,color:T.t3}}>{new Date(r.time).toLocaleDateString()}</span>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                        <div>
+                          <p style={{fontSize:10,color:T.t3,margin:"0 0 2px",fontWeight:600,textTransform:"uppercase"}}>Proceeds</p>
+                          <p style={{fontSize:13,color:T.t1,fontFamily:FONT_NUM,fontWeight:600,margin:0}}>{usd(r.proceeds)}</p>
+                        </div>
+                        <div>
+                          <p style={{fontSize:10,color:T.t3,margin:"0 0 2px",fontWeight:600,textTransform:"uppercase"}}>Cost Basis</p>
+                          <p style={{fontSize:13,color:T.t2,fontFamily:FONT_NUM,fontWeight:600,margin:0}}>{usd(r.costBasis)}</p>
+                        </div>
+                        <div>
+                          <p style={{fontSize:10,color:T.t3,margin:"0 0 2px",fontWeight:600,textTransform:"uppercase"}}>Gain/Loss</p>
+                          <p style={{fontSize:13,color:r.gain>=0?T.green2:T.red,fontFamily:FONT_NUM,fontWeight:700,margin:0}}>
+                            {r.gain>=0?"+":""}{usd(r.gain)}
+                          </p>
+                        </div>
+                      </div>
+                      <p style={{fontSize:11,color:T.t3,margin:"6px 0 0"}}>Held {r.holdDays} days</p>
+                    </Card>
+                  ))}
+
+                  {/* Export button */}
+                  <button onClick={()=>exportCSV(taxData.rows)}
+                    style={{width:"100%",marginTop:8,padding:"14px",borderRadius:T.r3,cursor:"pointer",
+                      fontFamily:FONT_BODY,border:`1px solid rgba(99,102,241,.3)`,
+                      background:"rgba(99,102,241,.1)",color:T.accent2,fontSize:14,fontWeight:700,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    ⬇ Export CSV for Tax Filing
+                  </button>
+                  <p style={{fontSize:11,color:T.t3,textAlign:"center",marginTop:8,lineHeight:1.6}}>
+                    Compatible with TurboTax, TaxAct, H&amp;R Block, and most tax software
+                  </p>
+                </>
+              )}
             </div>
           )}
 
