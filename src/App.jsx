@@ -92,15 +92,14 @@ async function fetchCGPrices() {
 // Swap the mock lines for the REAL lines once your partner credentials are approved.
 
 async function upholdFetchBalances(accessToken) {
-  // REAL: const r = await fetch('/api/uphold-balances', { headers:{ Authorization:`Bearer ${accessToken}` }});
-  //       return r.json();
-  await new Promise(r=>setTimeout(r,1800));
-  return {
-    BTC:  { amount:0.042,  avgBuy:58400 },
-    ETH:  { amount:2.1,    avgBuy:2850  },
-    SOL:  { amount:18.5,   avgBuy:142   },
-    USDC: { amount:1250,   avgBuy:1     },
-  };
+  // REAL (when Uphold partner API approved):
+  // const r = await fetch('/api/uphold-balances', { headers:{ Authorization:`Bearer ${accessToken}` }});
+  // const d = await r.json(); return d;
+
+  // Returns empty until real Uphold partner API is connected.
+  // No fake balances — users see only their real holdings.
+  await new Promise(r=>setTimeout(r,1000));
+  return {};
 }
 
 function upholdGetAuthURL() {
@@ -113,10 +112,9 @@ function upholdGetAuthURL() {
 // which signs requests with your COINBASE_API_KEY + COINBASE_API_SECRET env vars.
 // Set those in Vercel → Settings → Environment Variables to go live.
 
-const CB_LIVE = !!(
-  typeof process !== "undefined" &&
-  process.env?.REACT_APP_COINBASE_LIVE === "true"
-);
+// CB_LIVE is injected at build time by Vercel when REACT_APP_COINBASE_LIVE=true
+// If this reads as the literal string "true" the env var is set correctly
+const CB_LIVE = process.env.REACT_APP_COINBASE_LIVE === "true";
 
 async function cbCall(action, params = {}) {
   // When CB_LIVE is false (keys not yet set), run in paper/simulation mode
@@ -416,9 +414,12 @@ export default function SignalPulsePro() {
   };
 
   const connectUphold = ()=>{
-    setUpholdLoading(true); setUpholdError("");
-    // Simulate OAuth flow — replace with: window.location.href = upholdGetAuthURL();
-    setTimeout(async()=>{ await handleUpholdConnected("mock_token_"+Date.now(), user?.name||"Uphold User"); }, 2200);
+    // REAL OAuth flow (activate when Uphold partner API approved):
+    // window.location.href = upholdGetAuthURL();
+
+    // Until partner API is approved, show a "coming soon" message
+    // instead of silently granting fake balances.
+    setUpholdError("Uphold live connection coming soon. Your real balances will appear here once the partner API is approved.");
   };
 
   const disconnectUphold = ()=>{ setUpholdConnected(false); setUpholdUser(null); setPortfolio({}); };
@@ -1015,15 +1016,12 @@ export default function SignalPulsePro() {
           <div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#1EB8B8,#0A8080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",boxShadow:"0 8px 24px rgba(30,184,184,.3)",fontSize:26}}>🔗</div>
           <p style={{fontSize:18,fontWeight:800,color:T.t1,fontFamily:FONT_DISPLAY,margin:"0 0 6px"}}>Uphold</p>
           <p style={{fontSize:13,color:T.t2,margin:"0 0 20px",lineHeight:1.6}}>Connect your Uphold wallet to sync your real crypto balances and enable live portfolio tracking.</p>
-          {upholdLoading?(
-            <div style={{textAlign:"center",padding:"20px 0"}}>
-              <div style={{fontSize:24,color:"#1EB8B8",animation:"spin 1.2s linear infinite",marginBottom:10}}>◈</div>
-              <p style={{fontSize:13,color:T.t2,margin:0}}>Connecting to Uphold...</p>
-            </div>
-          ):(
-            <Btn variant="uphold" onClick={connectUphold}>🔗 Connect Uphold Wallet</Btn>
-          )}
-          {upholdError&&<p style={{fontSize:12,color:T.red,marginTop:10}}>{upholdError}</p>}
+          <div style={{padding:"16px",background:"rgba(245,158,11,.06)",borderRadius:T.r3,border:"1px solid rgba(245,158,11,.2)",marginBottom:16}}>
+            <p style={{fontSize:13,color:T.gold,fontWeight:700,margin:"0 0 6px"}}>⏳ Partner API Pending</p>
+            <p style={{fontSize:12,color:T.t3,margin:0,lineHeight:1.6}}>Full Uphold wallet connection is being set up. Live balances will sync automatically once your Uphold partner access is approved. Trading is available via Coinbase in the meantime.</p>
+          </div>
+          <Btn variant="uphold" onClick={connectUphold} style={{opacity:0.5}} disabled>🔗 Uphold — Coming Soon</Btn>
+          {upholdError&&<p style={{fontSize:12,color:T.gold,marginTop:10,lineHeight:1.5}}>{upholdError}</p>}
         </Card>
         <Card style={{marginBottom:16}}>
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>What gets synced</p>
@@ -1337,7 +1335,7 @@ export default function SignalPulsePro() {
               <button onClick={refreshUpholdBalances} disabled={upholdLoading} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(30,184,184,.3)",background:"rgba(30,184,184,.1)",color:"#1EB8B8",fontSize:12,fontWeight:600,opacity:upholdLoading?.6:1}}>{upholdLoading?"Syncing...":"↻ Refresh"}</button>
               <button onClick={disconnectUphold} style={{flex:1,padding:"8px",borderRadius:T.r3,cursor:"pointer",fontFamily:FONT_BODY,border:"1px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:T.red,fontSize:12,fontWeight:600}}>Disconnect</button>
             </div>
-          </>):(<Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)} style={{marginTop:10}}>🔗 Connect Uphold Wallet</Btn>)}
+          </>):(<div style={{marginTop:10}}><p style={{fontSize:12,color:T.t3,margin:"0 0 8px",lineHeight:1.5}}>Uphold live connection pending partner API approval. Use Coinbase for trading now.</p><Btn variant="uphold" onClick={()=>setScreen(S.CONNECT)} style={{opacity:0.6}}>⏳ Uphold — Coming Soon</Btn></div>)}
         </Card>
         <Card style={{marginBottom:12}}>
           <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Subscription</p>
@@ -1757,3 +1755,4 @@ export default function SignalPulsePro() {
     </div>
   );
 }
+
