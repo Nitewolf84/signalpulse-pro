@@ -103,8 +103,8 @@ const saveUsers = u => localStorage.setItem(MOCK_KEY, JSON.stringify(u));
 async function signUpUser(email,password,name) {
   const users=getUsers();
   if(users.find(u=>u.email===email)) throw new Error("Email already registered.");
-  const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),subscribed:false,trial:false,trialStart:null,provider:"email"};
-  users.push(user); saveUsers(users); return user;
+  const _mob=/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);const user={id:Date.now().toString(),email,password,name,createdAt:new Date().toISOString(),subscribed:false,trial:false,trialStart:null,provider:"email",device:_mob?"mobile":"desktop"};
+  users.push(user); saveUsers(users); const _sc=parseInt(localStorage.getItem("sp_signups")||"0")+1;localStorage.setItem("sp_signups",_sc.toString());if(_mob){const _ms=parseInt(localStorage.getItem("sp_signups_mobile")||"0")+1;localStorage.setItem("sp_signups_mobile",_ms.toString());} return user;
 }
 async function signInUser(email,password) { const user=getUsers().find(u=>u.email===email&&u.password===password); if(!user) throw new Error("Incorrect email or password."); return user; }
 async function signInGoogle() { return {id:"g_"+Date.now(),email:"demo@gmail.com",name:"Google User",subscribed:false,provider:"google",createdAt:new Date().toISOString()}; }
@@ -386,7 +386,7 @@ export default function SignalPulsePro(){
   const [favorites,setFavorites]=useState([]);
   const [marketFilter,setMarketFilter]=useState("all");
   const [signalFilter,setSignalFilter]=useState("all");
-  const [pushEnabled,setPushEnabled]=useState(false);
+  const [pushEnabled,setPushEnabled]=useState(false); // reset per-user on load
   const [trialDaysLeft,setTrialDaysLeft]=useState(30);
   const [searchQuery,setSearchQuery]=useState("");
   const [walletAddress,setWalletAddress]=useState(()=>localStorage.getItem("sp_wallet_addr")||"");
@@ -492,20 +492,27 @@ export default function SignalPulsePro(){
   const loadUserFavorites=(u)=>{try{return JSON.parse(localStorage.getItem(favKey(u))||localStorage.getItem("sp_favorites")||"[]");}catch(_){return [];}};
   useEffect(()=>{if(user)setFavorites(loadUserFavorites(user));},[user?.id]);
   const enablePush=async()=>{
-    if(!("Notification" in window)){alert("Push not supported.");return;}
+    if(!user){alert("Please sign in first.");return;}
+    if(!("Notification" in window)){alert("Push notifications are not supported in this browser.");return;}
     const perm=await Notification.requestPermission();
     if(perm==="granted"){
-      setPushEnabled(true);
-      const pushKey="sp_push_"+(user?.id||"guest");
+      const pushKey="sp_push_"+user.id;
       localStorage.setItem(pushKey,"true");
-      new Notification("SignalPulse Pro",{body:"Push alerts enabled for your account!",icon:"/favicon.ico"});
+      setPushEnabled(true);
+      new Notification("SignalPulse Pro",{body:"Push alerts enabled for "+user.name+"!",icon:"/favicon.ico"});
+    } else if(perm==="denied"){
+      alert("Push notifications were blocked. To enable them, click the lock icon in your browser address bar and allow notifications for this site.");
     }
   };
   useEffect(()=>{
+    // Always reset first — prevents previous user's preference bleeding into new user
+    setPushEnabled(false);
     if(!user) return;
     const pushKey="sp_push_"+(user.id||"guest");
-    const s=localStorage.getItem(pushKey)==="true"||localStorage.getItem("sp_push")==="true";
-    if(s&&Notification.permission==="granted")setPushEnabled(true);
+    const saved=localStorage.getItem(pushKey)==="true";
+    if(saved&&Notification.permission==="granted"){
+      setPushEnabled(true);
+    }
   },[user?.id]);
   useEffect(()=>{if(!pushEnabled||Notification.permission!=="granted")return;Object.entries(signals).forEach(([sym,sig])=>{if((sig.action==="BUY"||sig.action==="EXIT")&&favorites.includes(sym))new Notification(`${sig.action}: ${sym}`,{body:sig.reason,icon:"/favicon.ico"});});},[signals,pushEnabled]);
 
@@ -542,6 +549,13 @@ export default function SignalPulsePro(){
     }
     setUser(merged);
     setFavorites(loadUserFavorites(merged));
+    // Load push pref for this user
+    const pk="sp_push_"+merged.id;
+    if(localStorage.getItem(pk)==="true"&&Notification.permission==="granted"){
+      setPushEnabled(true);
+    } else {
+      setPushEnabled(false);
+    }
     setScreen(merged.subscribed||isOwner?S.MAIN:S.PAYWALL);
   }catch(e){setAuthErr(e.message);}
   setAuthBusy(false);
@@ -806,11 +820,11 @@ export default function SignalPulsePro(){
                   <p style={{fontSize:12,color:T.t2,fontWeight:600,marginBottom:10}}>Paste your wallet address</p>
                   <div style={{display:"flex",gap:8}}>
                     <input value={walletManualInput} onChange={e=>setWalletManualInput(e.target.value)} placeholder="0x... or bc1... or any address" style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_NUM,outline:"none"}}/>
-                    <button onClick={()=>{if(walletManualInput.length>8){
-                      localStorage.setItem("sp_wallet_addr",walletManualInput);
+                    <button onClick={()=>{const _addr=walletManualInput.trim();if(_addr.length>=8){
+                      localStorage.setItem("sp_wallet_addr",_addr);
                       localStorage.setItem("sp_wallet_type","Manual Address");
                       localStorage.setItem("sp_wallet_provider","manual");
-                      setWalletAddress(walletManualInput);setWalletType("Manual Address");setWalletProvider("manual");setWalletConnected(true);
+                      setWalletAddress(_addr);setWalletType("Manual Address");setWalletProvider("manual");setWalletConnected(true);
                     }}} style={{padding:"10px 16px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13}}>Connect</button>
                   </div>
                 </Card>
@@ -961,7 +975,8 @@ export default function SignalPulsePro(){
     const activeUsers=allUsers.filter(u=>u.subscribed&&!u.trial);
     const trialUsers=allUsers.filter(u=>u.trial&&u.subscribed);
     const freeUsers=allUsers.filter(u=>!u.subscribed);
-    const monthlyRev=activeUsers.length*19.99;
+    const paidUsers=activeUsers.filter(u=>!u.freeAccess);
+    const monthlyRev=paidUsers.length*19.99;
     const annualRev=monthlyRev*12;
     const totalVisits=parseInt(localStorage.getItem("sp_visits")||"0");
     const visitLog=JSON.parse(localStorage.getItem("sp_visit_log")||"[]");
@@ -1202,7 +1217,7 @@ export default function SignalPulsePro(){
                     {u.freeAccess&&<p style={{fontSize:10,color:T.green2,margin:"2px 0 0",fontWeight:700}}>🎁 Free Access</p>}
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <p style={{fontSize:13,fontWeight:700,color:u.freeAccess?T.green2:T.green2,margin:0,fontFamily:FONT_NUM}}>{u.freeAccess?"Free":"$19.99/mo"}</p>
+                    <p style={{fontSize:13,fontWeight:700,color:u.freeAccess?T.t3:T.green2,margin:0,fontFamily:FONT_NUM}}>{u.freeAccess?"$0.00 (Free)":"$19.99/mo"}</p>
                     <p style={{fontSize:10,color:T.t3,margin:"2px 0 0"}}>Since {new Date(u.createdAt).toLocaleDateString()}</p>
                   </div>
                 </div>
@@ -1440,7 +1455,7 @@ export default function SignalPulsePro(){
       </Card>
       <Card style={{marginBottom:12}}>
         <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>🔔 Notifications</p>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.b1}`}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>Browser Push</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Desktop & mobile browser alerts</p></div><button onClick={async()=>{if(pushEnabled){const pk="sp_push_"+(user?.id||"guest");setPushEnabled(false);localStorage.removeItem(pk);localStorage.removeItem("sp_push");return;}if(!("Notification" in window)){alert("Push not supported.");return;}const perm=await Notification.requestPermission();if(perm==="granted"){const pk="sp_push_"+(user?.id||"guest");setPushEnabled(true);localStorage.setItem(pk,"true");new Notification("SignalPulse Pro",{body:"Push alerts enabled!",icon:"/favicon.ico"});}}} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.4)":T.b1}`,background:pushEnabled?"rgba(16,185,129,.12)":T.bg1,color:pushEnabled?T.green2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{pushEnabled?"ON ✓":"OFF"}</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.b1}`}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>Browser Push</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Desktop & mobile browser alerts</p></div><button onClick={async()=>{if(pushEnabled){localStorage.removeItem(getPushKey(user));setPushEnabled(false);return;}if(!("Notification" in window)){alert("Push not supported.");return;}const perm=await Notification.requestPermission();if(perm==="granted"){const pk="sp_push_"+(user?.id||"guest");setPushEnabled(true);localStorage.setItem(pk,"true");new Notification("SignalPulse Pro",{body:"Push alerts enabled for "+user.name+"!",icon:"/favicon.ico"});}else if(perm==="denied"){alert("Notifications blocked. Allow them in your browser settings for this site.");}}} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${pushEnabled?"rgba(16,185,129,.4)":T.b1}`,background:pushEnabled?"rgba(16,185,129,.12)":T.bg1,color:pushEnabled?T.green2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{pushEnabled?"ON ✓":"OFF"}</button></div>
         <div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:smsEnabled?10:0}}><div><p style={{fontSize:13,fontWeight:600,color:T.t1,margin:0}}>📱 SMS Alerts</p><p style={{fontSize:11,color:T.t3,margin:"2px 0 0"}}>Text alerts to your cell phone</p></div><button onClick={()=>setSmsEnabled(p=>!p)} style={{padding:"7px 16px",borderRadius:20,border:`1px solid ${smsEnabled?"rgba(99,102,241,.4)":T.b1}`,background:smsEnabled?"rgba(99,102,241,.12)":T.bg1,color:smsEnabled?T.accent2:T.t3,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:FONT_BODY,minWidth:70}}>{smsEnabled?"ON ✓":"OFF"}</button></div>{smsEnabled&&(<div style={{marginTop:8}}><p style={{fontSize:12,color:T.t2,marginBottom:8}}>Enter your phone number to receive BUY/EXIT alerts via SMS.</p><div style={{display:"flex",gap:8}}><input value={phoneNumber} onChange={e=>setPhoneNumber(e.target.value)} placeholder="+1 (555) 000-0000" type="tel" style={{flex:1,background:T.bg1,border:`1px solid ${T.b1}`,borderRadius:T.r3,padding:"10px 12px",color:T.t1,fontSize:13,fontFamily:FONT_BODY,outline:"none"}}/><button onClick={()=>{if(phoneNumber.length>6){alert("SMS alerts set up for "+phoneNumber);}}} style={{padding:"10px 14px",borderRadius:T.r3,border:"none",background:T.accent,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:FONT_BODY,fontSize:13,whiteSpace:"nowrap"}}>Save</button></div><p style={{fontSize:11,color:T.t3,marginTop:6,lineHeight:1.5}}>Alerts fire for coins in your ★ Favorites.</p></div>)}</div>
       </Card>
       <Card style={{marginBottom:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>💳 Subscription</p><p style={{fontWeight:600,fontSize:15,color:isOwner?T.gold:user?.trial?T.green2:user?.subscribed?T.accent2:T.gold2,margin:0}}>{isOwner?"Owner — Free Lifetime":user?.trial?"🎁 Free Trial — 30 days":user?.subscribed?"Pro — $19.99/mo":"Free — Upgrade to unlock"}</p>{user?.trial&&<p style={{fontSize:12,color:T.t3,marginTop:4}}>Started {new Date(user.trialStart).toLocaleDateString()}</p>}{!isOwner&&!user?.subscribed&&!user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}}>Upgrade to Pro →</Btn>}{user?.trial&&<Btn onClick={()=>setScreen(S.PAYWALL)} style={{marginTop:12}} variant="secondary">Subscribe Now →</Btn>}</Card>
