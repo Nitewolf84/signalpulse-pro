@@ -36,6 +36,29 @@ const SUPPORT_EMAIL = "support@signalpulsepro.com"; // ← emails go here — se
 const PAYPAL_CLIENT_ID = "AdVv-0ZR2G304r2BujEU2m_UZQsPrh7NTEiuWcNTlDvRsAUdQpeoVzBZXIj59hMn6xMrdcAdgmKhiFBk";
 const PAYPAL_PLAN_ID   = "P-4H459901CX116533FNIKEHRY";
 
+const COIN_DESC = {
+  BTC:"Bitcoin is the original cryptocurrency, created in 2009 by the pseudonymous Satoshi Nakamoto. It is a decentralized digital currency with a fixed supply of 21 million coins, often called digital gold. Learn more: bitcoin.org",
+  ETH:"Ethereum is a programmable blockchain that enables smart contracts and decentralized apps (dApps). It powers DeFi, NFTs, and thousands of Web3 projects. Learn more: ethereum.org",
+  SOL:"Solana is a high-speed blockchain capable of 65,000+ transactions per second. Popular for NFTs, DeFi, and fast low-cost payments. Learn more: solana.com",
+  XRP:"XRP is a digital payment protocol and currency by Ripple Labs, designed for fast low-cost international money transfers between banks and institutions. Learn more: ripple.com",
+  BNB:"BNB (Build and Build) is the native token of the BNB Chain ecosystem and Binance exchange. Used for trading fee discounts, DeFi, and network fees. Learn more: bnbchain.org",
+  ADA:"Cardano is a proof-of-stake blockchain platform built on peer-reviewed research and formal verification. Focuses on security and sustainability. Learn more: cardano.org",
+  DOGE:"Dogecoin started as a meme in 2013 but grew into a widely-used tipping and payment currency with a passionate community. No supply cap. Learn more: dogecoin.com",
+  AVAX:"Avalanche is a fast smart contract platform that offers sub-second transaction finality. Known for subnets — customizable blockchains for specific use cases. Learn more: avax.network",
+  LINK:"Chainlink is a decentralized oracle network that connects smart contracts to real-world data, APIs, and payment systems. Critical infrastructure for DeFi. Learn more: chain.link",
+  DOT:"Polkadot connects multiple blockchains into one unified network, enabling cross-chain communication and shared security. Created by Ethereum co-founder Gavin Wood. Learn more: polkadot.network",
+  MATIC:"Polygon (MATIC) is an Ethereum Layer 2 scaling solution that makes transactions faster and cheaper while staying connected to Ethereum's security. Learn more: polygon.technology",
+  UNI:"Uniswap is the largest decentralized exchange (DEX) on Ethereum. It lets users swap tokens directly from their wallets without a centralized intermediary. Learn more: uniswap.org",
+  ATOM:"Cosmos is the Internet of Blockchains — a network of interoperable chains connected via the IBC protocol. Focuses on sovereignty and cross-chain communication. Learn more: cosmos.network",
+  LTC:"Litecoin is one of the oldest cryptocurrencies, created in 2011 as a faster lighter version of Bitcoin. Often used for everyday payments. Learn more: litecoin.org",
+  BCH:"Bitcoin Cash is a fork of Bitcoin that increased the block size to allow more transactions per second and lower fees for everyday use. Learn more: bitcoincash.org",
+  NEAR:"NEAR Protocol is a developer-friendly Layer 1 blockchain with a focus on usability, sharding for scalability, and low transaction costs. Learn more: near.org",
+  APT:"Aptos is a Layer 1 blockchain built by former Meta engineers using the Move programming language. Designed for safety, reliability, and high throughput. Learn more: aptoslabs.com",
+  ARB:"Arbitrum is Ethereum's most popular Layer 2 rollup, dramatically reducing gas fees while inheriting Ethereum's security. Home to a thriving DeFi ecosystem. Learn more: arbitrum.io",
+  USDC:"USD Coin is a fully-backed US dollar stablecoin issued by Circle. Each USDC is backed 1:1 by cash and short-term US Treasuries. Learn more: circle.com/usdc",
+  USDT:"Tether (USDT) is the most widely used stablecoin, pegged to the US dollar. Used extensively for trading and as a stable store of value across exchanges. Learn more: tether.to",
+};
+
 const FONT_DISPLAY = "'Clash Display', 'Sora', 'Plus Jakarta Sans', sans-serif";
 const FONT_BODY    = "'Plus Jakarta Sans', 'Outfit', 'Inter', sans-serif";
 const FONT_NUM     = "'Sora', 'Plus Jakarta Sans', sans-serif";
@@ -355,6 +378,8 @@ export default function SignalPulsePro(){
   const [marketLoading,setMarketLoading]=useState(false);
   const [chartCoin,setChartCoin]=useState(null);
   const [chartData,setChartData]=useState([]);
+  const [coinNews,setCoinNews]=useState([]);
+  const [newsLoading,setNewsLoading]=useState(false);
   const [chartFrame,setChartFrame]=useState("24H");
   const [chartLoading,setChartLoading]=useState(false);
   const [favorites,setFavorites]=useState([]);
@@ -452,6 +477,15 @@ export default function SignalPulsePro(){
   const loadMarketData=useCallback(async()=>{setMarketLoading(true);try{const data=await fetchCGMarketData();setMarketData(data);}catch(_){}setMarketLoading(false);},[]);
   useEffect(()=>{if(tab==="market")loadMarketData();},[tab,loadMarketData]);
   useEffect(()=>{if(!chartCoin)return;setChartLoading(true);setChartData([]);fetchCGChart(chartCoin.cgId,chartFrame).then(d=>setChartData(d)).catch(()=>setChartData([])).finally(()=>setChartLoading(false));},[chartCoin,chartFrame]);
+  useEffect(()=>{
+    if(!chartCoin)return;
+    setCoinNews([]);setNewsLoading(true);
+    fetch(`https://min-api.cryptocompare.com/data/v2/news/?categories=${chartCoin.symbol}&extraParams=SignalPulsePro`)
+      .then(r=>r.json())
+      .then(d=>{setCoinNews((d.Data||[]).slice(0,6));})
+      .catch(()=>setCoinNews([]))
+      .finally(()=>setNewsLoading(false));
+  },[chartCoin?.symbol]);
   const favKey=(u)=>"sp_fav_"+(u?.id||"guest");
   const toggleFavorite=(symbol)=>{setFavorites(prev=>{const n=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];localStorage.setItem(favKey(user),JSON.stringify(n));return n;});};
   const loadUserFavorites=(u)=>{try{return JSON.parse(localStorage.getItem(favKey(u))||localStorage.getItem("sp_favorites")||"[]");}catch(_){return [];}};
@@ -837,6 +871,45 @@ export default function SignalPulsePro(){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>{[["Market Cap",mkt.market_cap?`$${(mkt.market_cap/1e9).toFixed(2)}B`:"–",T.t1],["24H Volume",mkt.total_volume?`$${(mkt.total_volume/1e9).toFixed(2)}B`:"–",T.t1],["All Time High",mkt.ath?usd(mkt.ath):"–",T.green2],["ATH Date",mkt.ath_date?new Date(mkt.ath_date).toLocaleDateString():"–",T.t2],["All Time Low",mkt.atl?usd(mkt.atl):"–",T.red2],["ATL Date",mkt.atl_date?new Date(mkt.atl_date).toLocaleDateString():"–",T.t2],["Circulating Supply",mkt.circulating_supply?`${(mkt.circulating_supply/1e6).toFixed(2)}M ${chartCoin.symbol}`:"–",T.t2],["24H Change",mkt.price_change_percentage_24h?pct(mkt.price_change_percentage_24h):"–",mkt.price_change_percentage_24h>=0?T.green2:T.red]].map(([l,v,c])=>(<Card key={l} style={{padding:12}}><p style={{fontSize:10,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:"0 0 4px"}}>{l}</p><p style={{fontSize:14,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v}</p></Card>))}</div>
         <div style={{display:"flex",gap:10}}><Btn variant="success" onClick={()=>openTrade(chartCoin,"buy")} style={{flex:1,width:"auto"}}>▲ Buy {chartCoin.symbol}</Btn><Btn variant="danger" onClick={()=>openTrade(chartCoin,"sell")} style={{flex:1,width:"auto"}}>▼ Sell {chartCoin.symbol}</Btn></div>
+
+        {/* Coin Description */}
+        {COIN_DESC[chartCoin.symbol]&&(
+          <Card style={{marginTop:14,borderColor:"rgba(99,102,241,.2)",background:"rgba(99,102,241,.04)"}}>
+            <p style={{fontSize:11,color:T.accent2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>📖 About {chartCoin.name}</p>
+            <p style={{fontSize:13,color:T.t2,margin:0,lineHeight:1.7}}>{COIN_DESC[chartCoin.symbol].split("Learn more:")[0].trim()}</p>
+            {COIN_DESC[chartCoin.symbol].includes("Learn more:")&&(
+              <a href={"https://"+COIN_DESC[chartCoin.symbol].split("Learn more:")[1].trim()} target="_blank" rel="noopener noreferrer"
+                style={{display:"inline-block",marginTop:8,fontSize:12,color:T.accent2,textDecoration:"none",fontWeight:600}}>
+                🌐 Official website →
+              </a>
+            )}
+          </Card>
+        )}
+
+        {/* News */}
+        <div style={{marginTop:14}}>
+          <p style={{fontSize:11,color:T.t3,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>📰 Latest News — {chartCoin.name}</p>
+          {newsLoading&&<Card style={{textAlign:"center",padding:20}}><div style={{fontSize:20,color:T.accent,animation:"spin 1s linear infinite"}}>◈</div></Card>}
+          {!newsLoading&&coinNews.length===0&&<Card><p style={{fontSize:13,color:T.t3,margin:0,textAlign:"center"}}>No recent news found.</p></Card>}
+          {coinNews.map((n,i)=>(
+            <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",display:"block",marginBottom:10}}>
+              <Card style={{borderColor:"rgba(255,255,255,.06)",transition:"border-color .2s"}}>
+                <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                  {n.imageurl&&<img src={n.imageurl} alt="" style={{width:60,height:44,borderRadius:6,objectFit:"cover",flexShrink:0}}/>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{fontSize:13,fontWeight:600,color:T.t1,margin:"0 0 4px",lineHeight:1.4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{n.title}</p>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <span style={{fontSize:10,color:T.t3}}>{n.source_info?.name||n.source}</span>
+                      <span style={{fontSize:10,color:T.t3}}>·</span>
+                      <span style={{fontSize:10,color:T.t3}}>{ago(n.published_on*1000)}</span>
+                    </div>
+                  </div>
+                  <span style={{fontSize:12,color:T.accent2,flexShrink:0}}>→</span>
+                </div>
+              </Card>
+            </a>
+          ))}
+        </div>
       </div>
     </div>);
   }
@@ -1275,7 +1348,39 @@ export default function SignalPulsePro(){
             <p style={{fontSize:13,color:T.t2,marginTop:14,lineHeight:1.7}}>{da.summary}</p>
             {da.action&&<div style={{marginTop:12,padding:"12px 14px",background:`${T.accent}12`,borderRadius:T.r3,borderLeft:`3px solid ${T.accent}`}}><p style={{fontSize:13,color:T.accent2,margin:0,lineHeight:1.5,fontWeight:500}}>{da.action}</p></div>}
           </Card>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>{[["Target",da.targetPrice,T.green2],["Stop Loss",da.stopLoss,T.red],["Support",da.keyLevels?.support,T.gold2],["Resistance",da.keyLevels?.resistance,T.accent2]].map(([l,v,c])=>(<Card key={l} style={{textAlign:"center",padding:12}}><p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{l}</p><p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color:c,margin:0}}>{v||"–"}</p></Card>))}</div>
+          {(()=>{
+            const INFO={
+              Target:{desc:"The price AI predicts this coin could reach if the bullish trend continues. Not guaranteed — treat as an upside estimate.",color:T.green2,val:da.targetPrice},
+              Support:{desc:"A price level where buying pressure historically stops the coin from falling further. Acts as a floor.",color:T.gold2,val:da.keyLevels?.support},
+              "Stop Loss":{desc:"The price at which you should consider selling to limit your losses if the trade goes against you. Protects your capital.",color:T.red,val:da.stopLoss},
+              Resistance:{desc:"A price level where selling pressure historically prevents the coin from rising further. Acts as a ceiling.",color:T.accent2,val:da.keyLevels?.resistance},
+            };
+            const [openTip,setOpenTip]=React.useState(null);
+            const order=["Target","Support","Stop Loss","Resistance"];
+            return(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                {order.map(l=>{
+                  const {desc,color,val}=INFO[l];
+                  return(
+                    <Card key={l} style={{padding:12,position:"relative"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginBottom:6}}>
+                        <p style={{fontSize:11,color:T.t3,fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",margin:0}}>{l}</p>
+                        <button onClick={()=>setOpenTip(openTip===l?null:l)}
+                          style={{width:15,height:15,borderRadius:"50%",background:"rgba(99,102,241,.3)",border:"1px solid rgba(99,102,241,.5)",color:T.accent2,fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,lineHeight:1}}>i</button>
+                      </div>
+                      {openTip===l&&(
+                        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:T.bg1,border:`1px solid rgba(99,102,241,.3)`,borderRadius:T.r3,padding:"10px 12px",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+                          <p style={{fontSize:11,color:T.t2,margin:0,lineHeight:1.6}}>{desc}</p>
+                          <button onClick={()=>setOpenTip(null)} style={{marginTop:6,fontSize:10,color:T.accent2,background:"none",border:"none",cursor:"pointer",fontFamily:FONT_BODY}}>Got it ✓</button>
+                        </div>
+                      )}
+                      <p style={{fontSize:16,fontWeight:700,fontFamily:FONT_NUM,color,margin:0,textAlign:"center"}}>{val||"–"}</p>
+                    </Card>
+                  );
+                })}
+              </div>
+            );
+          })()}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><Card style={{borderLeft:`2px solid ${T.green}`}}><p style={{fontSize:11,color:T.green2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Bullish</p>{(da.bullish||[]).map((b,i)=><p key={i} style={{fontSize:12,color:T.t2,margin:"0 0 6px",lineHeight:1.4}}>• {b}</p>)}</Card><Card style={{borderLeft:`2px solid ${T.red}`}}><p style={{fontSize:11,color:T.red2,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Bearish</p>{(da.bearish||[]).map((b,i)=><p key={i} style={{fontSize:12,color:T.t2,margin:"0 0 6px",lineHeight:1.4}}>• {b}</p>)}</Card></div>
           {da.signal==="EXIT"&&<Btn variant="danger" onClick={()=>openPivot(deepCoin.symbol)}>⇄ Open Pivot Advisor →</Btn>}
         </>)}
